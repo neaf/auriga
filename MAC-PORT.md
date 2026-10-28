@@ -40,6 +40,9 @@ The macOS port builds, runs and projects:
   pause/play button changed the projected UI.
 - A fresh WebSocket client received 1 keyframe + 863 delta frames + 140 audio
   chunks in 3 s, so the browser pipeline is live on localhost.
+- Brave at `http://localhost:8080` showed the live AA UI with the header
+  `Auriga stream 1280x720 @ 30 fps frames ...`; audio starts muted until the
+  🔇 button is clicked.
 - Artifacts: `captures/2026-10-28-macos-session2-video.h264`,
   `...-audio-media.wav`, `...-input.jsonl`, and two extracted frames.
 
