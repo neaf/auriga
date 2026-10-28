@@ -132,6 +132,30 @@ Other differences that matter:
 - OpenAuto's Bluetooth default (adapter `NONE`) advertises `car_address=""` and
   pairing `UNAVAILABLE`. That is a variant to test; the baseline keeps it.
 
+## Minimal app retest (2026-10-28 evening)
+
+After the BT DB reset, the minimal `capture/` app completes AA 1.7, TLS,
+service discovery, channel setup and video setup, and captures real H.264
+(75–150 KB), then hits the dongle's USB reset (`AASDK Error 10`). Tested
+changes that did **not** fix it:
+
+- removed WPP service;
+- removed telephony audio;
+- Bluetooth `already_paired=true`, no auth data;
+- removed the Bluetooth service entirely;
+- restarted the app in a session loop.
+
+It resets every session. OpenAuto, by contrast, auto-reconnects after the first
+reset and its next session stays stable for minutes. Therefore OpenAuto is the
+working stack; the minimal app is not the current target (it remains the basis
+for a future headless emulator).
+
+Stream fix: OpenAuto's H.264 stream may have its IDR only at session start, so
+late browser clients received only delta frames and showed nothing. The stream
+server now caches the current GOP and, when no recent IDR exists, starts at
+offset 0; a new client gets the keyframe + deltas and catches up. Verified with
+a raw WebSocket client: 1 keyframe + 199 deltas.
+
 ## Build status (2026-10-28 11:13)
 
 - Dependencies installed; Qt 5.15.15 and the offscreen platform plugin present.

@@ -63,6 +63,8 @@ video, audio and input streams and later forwarding them to a real head unit.
 - Forwarding to a real head unit still needs a Pi 4/5 (host + OTG) or a
   two-device relay.
 - Build/run/patch details are in [`openauto-plan.md`](openauto-plan.md).
+- Next: move the proven stack to macOS (dongle direct to Mac, no Pi/hub). The
+  build/run plan and blockers are in [`MAC-PORT.md`](MAC-PORT.md).
 
 ## Quick start
 
@@ -265,7 +267,12 @@ The minimal app was chosen to avoid a Qt/OpenAuto build and to get raw channels
 quickly. That was the wrong first risk trade-off: the car's head unit behavior
 (full service set, timing, focus/keepalive, UI) is the known-good reference,
 and the minimal app never matched it. Full OpenAuto was built and now works
-(see above); the minimal app remains the basis for the next headless emulator.
+(see above). The minimal app was retested after the BT DB fix: it completes
+AA/TLS/service discovery and captures some video, but resets on every session
+and does not recover. Removing WPP, telephony, BT auth, the whole BT service,
+and adding a reconnect loop did not fix it, so it is **not** the current working
+stack; OpenAuto is. The minimal app remains the basis for a future headless
+emulator.
 
 ## Next plan: headless emulator + streaming
 
@@ -291,6 +298,7 @@ Secondary: keep OpenAuto as the capture host and use the `stream/` Mac client.
   with the Auriga capture patch applied on the Pi.
 - `aasdk-upstream/` — upstream `opencardev/aasdk` newdev clone for comparison.
 - `openauto-plan.md` — full OpenAuto build/run/patch plan and open questions.
+- `MAC-PORT.md` — macOS port plan (dongle direct to Mac, no Pi).
 - `patches/openauto-capture.patch` — file-sink/video/audio/input patch applied
   to OpenAuto on the Pi.
 - `openauto-config/` — `openauto.ini`, `openauto-logs.ini`, `run.sh`.

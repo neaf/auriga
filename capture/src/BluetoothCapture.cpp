@@ -79,11 +79,17 @@ void BluetoothCapture::onBluetoothPairingRequest(
 
   aap_protobuf::service::bluetooth::message::BluetoothPairingResponse response;
   response.set_status(aap_protobuf::shared::MessageStatus::STATUS_SUCCESS);
-  response.set_already_paired(false);
+  // The phone is already paired to the dongle's Bluetooth. Reporting
+  // "already paired" makes the phone skip the head-unit pairing exchange.
+  // Sending fake authentication data here (the old PIN 123456) makes the
+  // dongle reset the AA session with AASDK Error 10.
+  response.set_already_paired(true);
 
   auto promise = aasdk::channel::SendPromise::defer(strand_);
   promise->then(
-      [this, self = shared_from_this()]() { sendAuthenticationData(); },
+      [this, self = shared_from_this()]() {
+        AURIGA_INFO << "reported already paired; not sending auth data";
+      },
       std::bind(&BluetoothCapture::onChannelError, shared_from_this(),
                 std::placeholders::_1));
   channel_->sendBluetoothPairingResponse(response, std::move(promise));

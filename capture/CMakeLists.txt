@@ -5,20 +5,30 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # aasdk and aap_protobuf are built in ../build-aasdk by the project's
-# instructions; link against that tree directly.
-set(AASDK_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/../aasdk")
-set(AASDK_BUILD "${CMAKE_CURRENT_SOURCE_DIR}/../build-aasdk")
+# instructions; link against that tree directly. Both paths are cache
+# variables so the same source builds on the Pi (armv7 Linux) and the Mac.
+set(AASDK_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/../aasdk" CACHE PATH "aasdk source tree")
+set(AASDK_BUILD "${CMAKE_CURRENT_SOURCE_DIR}/../build-aasdk" CACHE PATH "aasdk build tree")
+
+if(APPLE)
+  # aasdk's macOS CMake builds static libraries.
+  set(AASDK_LIB "${AASDK_BUILD}/lib/libaasdk.a")
+  set(AAP_PROTOBUF_LIB "${AASDK_BUILD}/lib/libaap_protobuf.a")
+else()
+  set(AASDK_LIB "${AASDK_BUILD}/lib/libaasdk.so")
+  set(AAP_PROTOBUF_LIB "${AASDK_BUILD}/lib/libaap_protobuf.so")
+endif()
 
 add_library(aasdk SHARED IMPORTED)
 set_target_properties(aasdk PROPERTIES
-  IMPORTED_LOCATION "${AASDK_BUILD}/lib/libaasdk.so"
+  IMPORTED_LOCATION "${AASDK_LIB}"
   INTERFACE_INCLUDE_DIRECTORIES
     "${AASDK_SOURCE}/include;${AASDK_BUILD}/include;${AASDK_BUILD}/protobuf"
 )
 
 add_library(aap_protobuf SHARED IMPORTED)
 set_target_properties(aap_protobuf PROPERTIES
-  IMPORTED_LOCATION "${AASDK_BUILD}/lib/libaap_protobuf.so"
+  IMPORTED_LOCATION "${AAP_PROTOBUF_LIB}"
   INTERFACE_INCLUDE_DIRECTORIES "${AASDK_BUILD}/protobuf"
 )
 

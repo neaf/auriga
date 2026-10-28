@@ -106,7 +106,7 @@ function handleBinary(buffer) {
   if (type === 1 || type === 3) {
     if (!configured || !decoder) return;
     const key = type === 1;
-    if (!key && decoder.decodeQueueSize > 12) return;
+    if (!key && decoder.decodeQueueSize > 200) return;
     try {
       decoder.decode(new EncodedVideoChunk({
         type: key ? "key" : "delta",

@@ -165,6 +165,22 @@ normal Qt/RtAudio path.
 
 See `stream/README.md` for protocol details.
 
+## Minimal app status
+
+The minimal `capture/` app is **not** the working stack. After the BT DB reset it
+completes AA/TLS/service discovery and captures some video, but resets on every
+session. Removing WPP, telephony, BT auth, the whole BT service, and adding a
+session loop did not fix it. OpenAuto auto-reconnects after the first reset and
+is the stack to use. The minimal app remains the basis for a future headless
+emulator.
+
+## Mac port
+
+The plan to move the proven stack to macOS (dongle direct to Mac, no Pi/hub) is
+in [`MAC-PORT.md`](MAC-PORT.md). The main blocker is Boost 1.92 removing
+`boost::asio::io_service`; use `boost@1.85`. macOS builds aasdk as static
+libraries.
+
 ## Known issues / next steps
 
 - First AA session can reset on the dongle's AA Bluetooth pairing request

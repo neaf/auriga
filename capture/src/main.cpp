@@ -21,21 +21,15 @@
 #include <aasdk/USB/USBWrapper.hpp>
 
 #include "AudioCapture.hpp"
-#include "BluetoothCapture.hpp"
 #include "HeadUnit.hpp"
 #include "InputCapture.hpp"
 #include "Log.hpp"
 #include "MicrophoneCapture.hpp"
 #include "SensorCapture.hpp"
-#include "WifiProjectionCapture.hpp"
 #include "Usb.hpp"
 #include "VideoCapture.hpp"
 
 namespace {
-
-// The dongle's own Bluetooth address, advertised to the phone as the car
-// address.  It has been stable across power cycles.
-constexpr const char *kDongleBluetoothAddress = "ED:A2:A4:94:4F:B8";
 
 struct Options {
   std::string outputDir = "captures";
@@ -127,7 +121,6 @@ int main(int argc, char **argv) {
         aasdk::messenger::ChannelId::MEDIA_SINK_MEDIA_AUDIO,
         aasdk::messenger::ChannelId::MEDIA_SINK_SYSTEM_AUDIO,
         aasdk::messenger::ChannelId::MEDIA_SINK_GUIDANCE_AUDIO,
-        aasdk::messenger::ChannelId::MEDIA_SINK_TELEPHONY_AUDIO,
     };
     for (const auto channel : audioChannels) {
       std::string name;
@@ -153,20 +146,12 @@ int main(int argc, char **argv) {
           options.outputDir + "/audio-" + name + ".wav"));
     }
 
-    auto bluetooth = std::make_shared<auriga::BluetoothCapture>(
-        ioService, messenger, kDongleBluetoothAddress);
-    services.push_back(bluetooth);
-
     auto microphone =
         std::make_shared<auriga::MicrophoneCapture>(ioService, messenger);
     services.push_back(microphone);
 
     auto sensor = std::make_shared<auriga::SensorCapture>(ioService, messenger);
     services.push_back(sensor);
-
-    auto wifiProjection = std::make_shared<auriga::WifiProjectionCapture>(
-        ioService, messenger, "e8:5c:b1:b5:c6:41");
-    services.push_back(wifiProjection);
 
     std::shared_ptr<auriga::InputCapture> input;
     if (options.input) {

@@ -120,6 +120,9 @@ class Streamer:
         self.fifo_path = fifo_path
         self.clients = set()
         self.t0 = time.monotonic()
+        self.lock = asyncio.Lock()
+        self.gop = []
+        self.max_gop = 100000
 
         self.sps, self.pps = extract_sps_pps(video_path)
         if self.sps is not None and self.pps is not None:
@@ -130,7 +133,7 @@ class Streamer:
             self.codec = "avc1.42c01f"
 
         last_idr = find_last_idr(video_path)
-        self.video_offset = last_idr if last_idr is not None else os.path.getsize(video_path)
+        self.video_offset = last_idr if last_idr is not None else 0
         self.audio_offset = max(AUDIO_HEADER, os.path.getsize(audio_path))
         print(
             "stream: codec=%s sps=%s pps=%s video_offset=%s audio_offset=%s"
@@ -215,6 +218,7 @@ class Streamer:
                     self.description = build_avcc(self.sps, self.pps)
                     self.codec = "avc1.%02x%02x%02x" % (self.sps[1], self.sps[2], self.sps[3])
                 self.video_offset = 0
+                self.gop = []
                 f = open(self.video_path, "rb")
                 f.seek(0)
                 buf = b""
@@ -275,8 +279,17 @@ class Streamer:
         sample = b"".join(struct.pack(">I", len(nal)) + nal for nal in frame)
         if not sample:
             return
-        header = struct.pack(">BQ", 1 if key else 3, self.timestamp())
-        await self.broadcast(header + sample)
+        message = struct.pack(">BQ", 1 if key else 3, self.timestamp()) + sample
+        async with self.lock:
+            if key:
+                self.gop = [message]
+            elif self.gop:
+                self.gop.append(message)
+                if len(self.gop) > self.max_gop:
+                    # A very long GOP is not useful for a late client; wait for
+                    # the next keyframe instead of sending broken references.
+                    self.gop = []
+            await self.broadcast(message)
 
     async def audio_loop(self):
         f = open(self.audio_path, "rb")
@@ -318,11 +331,14 @@ class Streamer:
             await asyncio.sleep(0.008)
 
     async def handle(self, ws):
-        self.clients.add(ws)
         peer = getattr(ws, "remote_address", "?")
         print("stream: client connected %s" % (peer,), flush=True)
         try:
-            await self.send_hello(ws)
+            async with self.lock:
+                await self.send_hello(ws)
+                for message in list(self.gop):
+                    await ws.send(message)
+                self.clients.add(ws)
             async for message in ws:
                 if not isinstance(message, str):
                     continue

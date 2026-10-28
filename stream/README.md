@@ -74,10 +74,12 @@ context, which WebCodecs requires.
 
 - The file sinks do not preserve AA timestamps; video/audio sync is
   best-effort (audio is anchored to its own first chunk).
-- The stream starts at the last IDR in the file, not necessarily live; it
-  catches up as frames are sent.
+- New clients receive the cached GOP (the last keyframe plus following
+  deltas), so WebCodecs can start decoding. If the AA stream has no recent IDR,
+  the server starts at file offset 0 and catches up; memory use grows with the
+  cached GOP, so restart the streamer per session for long runs.
 - A new AA session truncates `video.h264`/`audio-media.wav`; the server detects
-  it and sends `reset`, but the previous capture is lost.
+  it, clears the GOP and sends `reset`, but the previous capture is lost.
 - The H.264 parser assumes one slice per frame (the current AA stream meets
   this).
 - No H.264 transcode; the Pi only copies/frames. WebCodecs does the decode on
