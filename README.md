@@ -86,8 +86,9 @@ video, audio and input streams and later forwarding them to a real head unit.
 - Forwarding to a real head unit still needs a Pi 4/5 (host + OTG) or a
   two-device relay.
 - Build/run/patch details are in [`openauto-plan.md`](openauto-plan.md).
-- Next: test the physical dongle on the Mac USB path. The build/run path and
-  current status are in [`MAC-PORT.md`](MAC-PORT.md).
+- Next: long-run stability on macOS and per-session capture filenames. The
+  physical Mac USB path is proven; build/run details and status are in
+  [`MAC-PORT.md`](MAC-PORT.md).
 
 ## Quick start
 
