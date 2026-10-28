@@ -1,0 +1,89 @@
+diff --git a/src/autoapp/App.cpp b/src/autoapp/App.cpp
+index 751c7cd..703ef42 100644
+--- a/src/autoapp/App.cpp
++++ b/src/autoapp/App.cpp
+@@ -16,6 +16,7 @@
+ *  along with openauto. If not, see <http://www.gnu.org/licenses/>.
+ */
+ 
++#include <cstdlib>
+ #include <thread>
+ #include <aasdk/USB/AOAPDevice.hpp>
+ #include <aasdk/TCP/TCPEndpoint.hpp>
+@@ -24,6 +25,13 @@
+ 
+ namespace f1x::openauto::autoapp {
+ 
++  // macOS AirPlay Receiver listens on TCP 5000, which OpenAuto uses for
++  // Android Auto over Wi-Fi. The Auriga capture build is USB-only, so do not
++  // claim that port (or accept TCP clients) when AURIGA_CAPTURE_DIR is set.
++  static bool aurigaCaptureMode() {
++    return std::getenv("AURIGA_CAPTURE_DIR") != nullptr;
++  }
++
+   App::App(boost::asio::io_service &ioService, aasdk::usb::USBWrapper &usbWrapper, aasdk::tcp::ITCPWrapper &tcpWrapper,
+            service::IAndroidAutoEntityFactory &androidAutoEntityFactory,
+            aasdk::usb::IUSBHub::Pointer usbHub,
+@@ -31,7 +39,8 @@ namespace f1x::openauto::autoapp {
+       : ioService_(ioService), usbWrapper_(usbWrapper), tcpWrapper_(tcpWrapper), strand_(ioService_),
+         androidAutoEntityFactory_(androidAutoEntityFactory), usbHub_(std::move(usbHub)),
+         connectedAccessoriesEnumerator_(std::move(connectedAccessoriesEnumerator)),
+-        acceptor_(ioService, boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), 5000)), isStopped_(false) {
++        acceptor_(ioService, boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(),
++                                                           aurigaCaptureMode() ? 0 : 5000)), isStopped_(false) {
+ 
+   }
+ 
+@@ -167,7 +176,9 @@ namespace f1x::openauto::autoapp {
+     promise->then(std::bind(&App::aoapDeviceHandler, this->shared_from_this(), std::placeholders::_1),
+                   std::bind(&App::onUSBHubError, this->shared_from_this(), std::placeholders::_1));
+     usbHub_->start(std::move(promise));
+-    startServerSocket();
++    if (!aurigaCaptureMode()) {
++      startServerSocket();
++    }
+   }
+ 
+   void App::startServerSocket() {
+diff --git a/src/autoapp/UI/SettingsWindow.cpp b/src/autoapp/UI/SettingsWindow.cpp
+index d29d7ba..6518ee0 100644
+--- a/src/autoapp/UI/SettingsWindow.cpp
++++ b/src/autoapp/UI/SettingsWindow.cpp
+@@ -249,24 +249,24 @@ namespace f1x::openauto::autoapp::ui {
+   }
+ #endif
+ #ifdef Q_OS_MAC
++  // The upstream macOS branch referenced a BluetoothAdapterLister helper that
++  // does not exist in this tree, so it never compiled. Use the same Qt
++  // enumeration as the Linux branch instead.
+   void SettingsWindow::populateBluetoothComboBoxMac(QComboBox *comboBoxBluetooth) {
+-    BluetoothAdapterLister lister;
+-    QStringList adapters = lister.listAdapters();
++    QList<QBluetoothHostInfo> adapters = QBluetoothLocalDevice::allDevices();
+ 
+     comboBoxBluetooth->clear(); // Clear existing items
+ 
+-    if (adapters.isEmpty()) {
+-      comboBoxBluetooth->addItem(QCoreApplication::translate("SettingsWindow", "none", nullptr));
+-    } else {
+-      for (const QString &adapter: adapters) {
+-        QStringList parts = adapter.split(" (");
+-        if (parts.count() == 2) {
+-          QString name = parts[0];
+-          QString address = parts[1].left(parts[1].length() - 1); // Remove trailing ')'
+-          comboBoxBluetooth->addItem(QCoreApplication::translate("SettingsWindow", adapter.toUtf8().constData()),
+-                                     QVariant(address));
+-        }
++    if (!adapters.isEmpty()) {
++      for (const QBluetoothHostInfo &adapter: adapters) {
++        QString adapterAddress = adapter.address().toString();
++        comboBoxBluetooth->addItem(QCoreApplication::translate("SettingsWindow",
++                                                            QString("%1 (%2)").arg(adapter.name()).arg(
++                                                                adapterAddress).toUtf8().constData()),
++                                                 QVariant(adapterAddress));
+       }
++    } else {
++      comboBoxBluetooth->addItem(QCoreApplication::translate("SettingsWindow", "none", nullptr));
+     }
+   }
+ #endif

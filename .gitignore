@@ -7,6 +7,15 @@
 *.o
 *.so
 
+# python venv for the stream server
+/.venv/
+
+# macOS captures (large media, local only)
+/captures-mac/
+
+# OpenAuto file log (cwd of openauto-config)
+/openauto-config/openauto.log
+
 # Large capture media (kept locally for analysis)
 /captures/*.h264
 /captures/*.mp4

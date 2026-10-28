@@ -11,8 +11,60 @@ The dongle is a **relay at the AA layer**: it terminates the phone-side
 Wi-Fi/WPP link but forwards AA service discovery/messages. The phone sees the
 head unit's `display_name` and service set.
 
-The Mac is a **remote UI**: Brave/Chrome displays live H.264 and PCM audio and
-sends touches back through the Pi. The AA host stays on the Pi.
+The Mac is a **remote UI** in the Pi setup: Brave/Chrome displays live H.264 and
+PCM audio and sends touches back through the Pi. The AA host stays on the Pi.
+
+Since the macOS port, the Mac can also be the **head unit itself** with the
+dongle plugged directly into it. That path uses the same OpenAuto capture patch
+and the same browser client, with no Pi, hub or SSH tunnel:
+
+```
+phone --BT/WiFi--> AutoLink dongle --USB AOA--> Mac OpenAuto capture
+                                                    |
+                                        captures-mac/video.h264 etc.
+                                                    |
+                                         auriga_stream.py (localhost)
+                                                    |
+                                       Brave (WebCodecs + WebAudio)
+                                                    |
+                                         tap JSON -> /tmp/auriga-in
+```
+
+## Quick start — macOS head unit (no Pi)
+
+Plug the AutoLink dongle directly into the Mac. From the repo root:
+
+```bash
+./scripts/mac-headunit-start.sh
+```
+
+Then open `http://localhost:8080` (Brave/Chrome), click the small 🔇 to enable
+audio, and tap the canvas to drive AA. Stop with:
+
+```bash
+./scripts/mac-headunit-stop.sh
+```
+
+`mac-headunit-start.sh` starts the offscreen OpenAuto capture build, the local
+stream server (`127.0.0.1:8080/8081`), and `caffeinate`. Build details are in
+[`MAC-PORT.md`](MAC-PORT.md).
+
+Normal macOS session:
+
+1. Dongle in MTP (`2717:ff40`); phone BT/Wi-Fi on and associated with
+   `AutoLink-A512` (or let it associate when the dongle comes up).
+2. Start `mac-headunit-start.sh`; `autoapp` switches the dongle to AOA
+   (`18d1:2d00`).
+3. Wait for `Version Received: 256.1792`, TLS, service discovery, then the AA
+   UI in Brave.
+4. Capture files appear in `captures-mac/`; browser taps go to
+   `/tmp/auriga-in` and are logged in `captures-mac/input.jsonl`.
+
+If the first AA entity fails before the phone associates, the dongle stays in
+AOA and `autoapp` sits at `Waiting for device...`. Unplug/replug the dongle
+(cold boot to MTP) with the phone's BT/Wi-Fi on; the next AOA switch projects.
+
+## Pi head unit + Mac remote UI (fallback)
 
 ```
 phone --BT/WiFi--> AutoLink dongle --USB AOA--> Pi OpenAuto capture
@@ -38,7 +90,7 @@ phone --BT/WiFi--> AutoLink dongle --USB AOA--> Pi OpenAuto capture
   `AutoLink-A512`; Wi-Fi password `12345678`.
 - Phone: Galaxy S25, AA 17.9; paired to the dongle; iPhone/OPPO off.
 
-## Quick start
+## Quick start — Pi head unit
 
 On the Pi:
 
@@ -155,6 +207,12 @@ It adds file H.264/WAV sinks, a silent mic source, a FIFO/JSONL input device,
 and the `AURIGA_CAPTURE_DIR` hooks. Without that env var, OpenAuto uses its
 normal Qt/RtAudio path.
 
+For the native macOS build (aasdk 1.7 + OpenAuto), follow the exact
+configure commands in [`MAC-PORT.md`](MAC-PORT.md). The two non-obvious points:
+`Boost_DIR` must point at `boost@1.85`, and OpenAuto needs
+`patches/openauto-macos.patch` for the Bluetooth lister and the TCP-5000
+(AirPlay) conflict.
+
 ## Streaming server
 
 `stream/auriga_stream.py` tails `~/auriga/captures-openauto/video.h264` and
@@ -176,10 +234,29 @@ emulator.
 
 ## Mac port
 
-The plan to move the proven stack to macOS (dongle direct to Mac, no Pi/hub) is
-in [`MAC-PORT.md`](MAC-PORT.md). The main blocker is Boost 1.92 removing
-`boost::asio::io_service`; use `boost@1.85`. macOS builds aasdk as static
-libraries.
+The macOS build/run path is in [`MAC-PORT.md`](MAC-PORT.md). Status
+(2026-10-28):
+
+- Build works: aasdk 1.7 static, OpenAuto `4cc739b8` + capture patch +
+  `patches/openauto-macos.patch`, offscreen capture.
+- Run with `./scripts/mac-headunit-start.sh`; stop with
+  `./scripts/mac-headunit-stop.sh`. No Pi, hub or SSH tunnel.
+- Capture files live in `captures-mac/`; the stream server is the same one used
+  on the Pi, started with those paths.
+- `boost@1.85` is required (`boost::asio::io_service`); Homebrew's default
+  Boost 1.92 does not compile aasdk.
+- The macOS patch disables OpenAuto's TCP-5000 AA-over-Wi-Fi listener in
+  capture mode, because macOS AirPlay Receiver already listens on 5000.
+- Physical projection works (2026-10-28): AA 1.7/TLS, 1280x720 H.264, 48 kHz
+  stereo audio, browser/FIFO touch input. Artifacts are
+  `captures/2026-10-28-macos-session2-*`.
+- If the first AA entity fails before the phone associates, the dongle stays
+  in AOA and OpenAuto waits for a new USB device. Unplug/replug the dongle
+  (cold boot to MTP) with the phone's BT/Wi-Fi on; the next AOA switch
+  projects. With the phone already associated, the normal first-session reset
+  reconnects automatically.
+
+The Pi stack remains the working fallback.
 
 ## Known issues / next steps
 

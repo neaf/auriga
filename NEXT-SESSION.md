@@ -1,107 +1,72 @@
-# Next session handoff
+# Auriga next-session handoff
 
-## Current state (2026-10-28, end of session)
+## Current state (2026-10-28, macOS port)
 
-**Working on the Pi:**
+**Working:**
 
-- Full OpenAuto (`4cc739b8`) + aasdk 1.7 projects the Galaxy S25 through the
-  AutoLink dongle.
-- Captures 1280x720 H.264, 48 kHz/16-bit stereo media audio, JSONL touch input.
-- Pi stream server + Brave/Chrome client works; late clients now receive the
-  cached GOP (keyframe + deltas) so video decodes.
-- Start/stop: `scripts/pi-start.sh`, `pi-stop.sh`, `mac-start.sh`, `mac-stop.sh`.
-- BT reset: deleting `btapp.db`/`btapp.bk` and re-pairing restored advertising.
-  Current DB is the fresh 33-byte one (`dongle-backup/btapp.db.galaxy-fresh`).
+- Pi: full OpenAuto (`4cc739b8`) + aasdk 1.7 projects the Galaxy S25 through
+  the AutoLink dongle; captures 1280x720 H.264, 48 kHz stereo WAV, JSONL input.
+- Pi stream server + Brave client works; late clients get the cached GOP.
+- Pi start/stop: `scripts/pi-start.sh`, `pi-stop.sh`; remote UI:
+  `scripts/mac-start.sh`, `mac-stop.sh`.
+- **macOS build works**: aasdk 1.7 static + OpenAuto `4cc739b8` + capture patch
+  + `patches/openauto-macos.patch` produce `build-openauto-mac/bin/autoapp`.
+- **macOS projection works**: dongle direct to the Mac, MTP `2717:ff40` ->
+  AOA `18d1:2d00`, AA 1.7/TLS/service discovery, 1280x720 H.264 + 48 kHz
+  stereo audio, browser/FIFO touch input. Artifacts:
+  `captures/2026-10-28-macos-session2-*` (3057 frames / 122 s, 68.6 s audio).
+- macOS local run/stop: `scripts/mac-headunit-start.sh`,
+  `mac-headunit-stop.sh`. Capture dir `captures-mac/`; stream server runs on
+  localhost (no Pi, hub, or SSH tunnel).
 
-**Minimal app status: rejected for now.**
+**Recovery caveat on macOS:** if the first AA entity fails before the phone is
+associated, the dongle stays in AOA and `autoapp` waits at
+`Waiting for device...`. Unplug/replug the dongle (cold boot to MTP) with the
+phone's BT/Wi-Fi on; the next AOA switch projects. With the phone already
+associated, the normal first-session reset reconnects automatically.
 
-It completes AA 1.7/TLS/service discovery/channel setup and captures real video,
-but resets every session and does not recover. We tested removing WPP,
-telephony, BT auth data, the whole BT service, and a reconnect loop; it still
-reset. Use OpenAuto for the working stack. The minimal app remains the basis for
-a future headless emulator, but it is not the current target.
+**Next:** long-run stability on macOS, per-session capture filenames, and the
+headless emulator work. No physical dongle test remains blocking.
 
-**Next: move the proven stack to macOS.**
+**Minimal app status: rejected for now.** It completes AA 1.7/TLS/service
+discovery and captures real video, but resets every session and does not
+recover. We tested removing WPP, telephony, BT auth data, the whole BT service,
+and a reconnect loop; it still reset. OpenAuto is the working stack.
 
-The plan is in [`MAC-PORT.md`](MAC-PORT.md): dongle direct to Mac USB, OpenAuto
-built natively (no Qt UI changes beyond NOPI/capture patch), stream server on
-localhost, no Pi/hub/SSH.
+## macOS build/run summary
 
-## Prompt to paste into the new session
+Full commands are in [`MAC-PORT.md`](MAC-PORT.md). Key points:
 
-```text
-We are continuing the Auriga project in /Users/tomaszwerbicki/dev/auriga.
+- `brew install boost@1.85 qt@5 taglib rtaudio util-linux gpsd protobuf abseil
+  libusb openssl@3 pkg-config`; Boost 1.85 is mandatory (`io_service`).
+- aasdk: `aasdk-upstream` + `AASDK_MINOR = 7`; build dir `build-aasdk-mac`;
+  force `Boost_DIR` to 1.85 (`'-UBoost_.*'` when reconfiguring a cached tree).
+- OpenAuto: `4cc739b8`, apply `patches/openauto-capture.patch` and
+  `patches/openauto-macos.patch`; configure with the extra absl/taglib/gps
+  includes and OpenSSL link flags from MAC-PORT.
+- Python: `.venv/bin/python` with `websockets` (repo-local venv).
 
-Read, in this order:
-1. README.md
-2. MAC-PORT.md
-3. RUNBOOK.md
-4. openauto-plan.md
-5. stream/README.md
+## Useful values
 
-Goal: move the proven Android Auto head unit from the Pi to macOS, with the
-AutoLink dongle plugged directly into the Mac. No Pi, no powered hub, no SSH
-tunnel. Keep the same behavior and capture pipeline.
-
-Use OpenAuto, not the minimal capture/ app. The minimal app completes AA
-1.7/TLS/service discovery and captures some video, but resets every session; we
-already tested removing WPP, telephony, BT auth, the whole BT service, and
-adding a reconnect loop without fixing it. OpenAuto projects end-to-end and
-auto-reconnects after the dongle's first-session USB reset.
-
-Mac port plan (details in MAC-PORT.md):
-1. brew install boost@1.85 qt@5 taglib rtaudio util-linux gpsd protobuf abseil
-   libusb openssl@3 pkg-config. boost@1.85 is required because aasdk/OpenAuto
-   use boost::asio::io_service, removed in Boost 1.92.
-2. Build aasdk 1.7 (newdev source, Version.hpp minor=7) for macOS:
-   - CMAKE_POLICY_VERSION_MINIMUM=3.5
-   - SKIP_BUILD_PROTOBUF=ON, SKIP_BUILD_ABSL=ON, AASDK_TEST=OFF
-   - add absl include dirs to the generated aap_protobuf target (protobuf 36
-     headers include absl)
-   - macOS builds static libaasdk.a / libaap_protobuf.a.
-3. Build OpenAuto 4cc739b8 with NOPI=ON + patches/openauto-capture.patch:
-   - AASDK_INCLUDE_DIR=<aasdk>/include/aasdk and
-     CMAKE_CXX_FLAGS_INIT=-I<aasdk>/include
-   - AASDK_LIB_DIR=.../libaasdk.a
-   - AAP_PROTOBUF_INCLUDE_DIR=.../build-aasdk-mac/protobuf
-   - AAP_PROTOBUF_LIB_DIR=.../libaap_protobuf.a
-   - CMAKE_PREFIX_PATH with qt@5, boost@1.85, protobuf, abseil, taglib,
-     rtaudio, util-linux, gpsd, openssl@3, libusb.
-4. Run autoapp with AURIGA_CAPTURE_DIR and QT_QPA_PLATFORM=offscreen; run
-   stream/auriga_stream.py with the Mac capture paths; open
-   http://localhost:8080 in Brave.
-5. Move the dongle to the Mac; phone stays paired to AutoLink-A512. Test AOA,
-   projection, video/audio/input. Expect one first-session reset; OpenAuto
-   auto-reconnects.
-
-Constraints:
-- No firmware flashing, factory reset, or dongle/phone writes/deletes without
-  explicit approval.
-- Keep iPhone/OPPO BT/Wi-Fi off during AA tests.
-- The dongle is a relay at the AA layer: the phone sees OpenAuto's display_name
-  and service set.
-- The Pi stack is the fallback and is committed; don't break it while porting.
-- Persist findings and commit.
-
-Useful current values:
-- Dongle: MTP 2717:ff40, AOA 18d1:2d00; BT/Wi-Fi AutoLink-A512;
-  Wi-Fi password 12345678; BT ED:A2:A4:94:4F:B8.
-- Galaxy S25 BT 5C:D3:3D:56:71:F4; AA 17.9.
-- Pi: auriga-pi.local / 192.168.2.2.
-- Pi build: ~/auriga/build-openauto, ~/auriga/build-aasdk.
-- Capture: ~/auriga/captures-openauto; stream: ~/auriga/stream.
-- Mac ADB works: adb devices shows RFGL329J04J (SM-S931B).
-```
+- Dongle: MTP `2717:ff40`, AOA `18d1:2d00`; BT/Wi-Fi `AutoLink-A512`;
+  Wi-Fi password `12345678`; BT `ED:A2:A4:94:4F:B8`.
+- Galaxy S25 BT `5C:D3:3D:56:71:F4`; AA 17.9; ADB `RFGL329J04J`.
+- Pi: `auriga-pi.local` / `192.168.2.2`; builds `~/auriga/build-openauto`,
+  `~/auriga/build-aasdk`; captures `~/auriga/captures-openauto`.
+- Mac builds: `build-aasdk-mac`, `build-openauto-mac`; captures
+  `captures-mac`.
 
 ## Important files
 
 - `README.md` — project state, quick start.
-- `MAC-PORT.md` — macOS build/run plan and known blockers.
-- `RUNBOOK.md` — operational steps, BT recovery, streaming.
-- `openauto-plan.md` — full build/run/patch history and results.
-- `stream/` — Pi WebSocket server + Brave client (GOP cache for new clients).
+- `MAC-PORT.md` — exact macOS build/run path, fixes and status.
+- `RUNBOOK.md` — operational steps, BT recovery, streaming, Mac local mode.
+- `openauto-plan.md` — full build/run/patch history on the Pi.
+- `stream/` — WebSocket server + Brave client (GOP cache for new clients).
 - `patches/openauto-capture.patch` — file sinks applied to OpenAuto.
-- `openauto-config/` — config + launch script.
+- `patches/openauto-macos.patch` — macOS Bluetooth lister + AirPlay/TCP-5000
+  fixes.
+- `openauto-config/` — config, `run.sh` (Pi), `run-mac.sh` (macOS).
 - `scripts/` — Pi/Mac start-stop, `aa-tap.sh`.
 - `dongle-backup/` — BT DB backups/restore rules.
-- `captures/` — local media artifacts (large files not in git).
+- `captures/`, `captures-mac/` — local media artifacts (not in git).

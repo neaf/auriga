@@ -5,6 +5,10 @@ capture build); the Pi tails the live capture files and serves them over
 WebSocket. Brave/Chrome on the Mac decodes with WebCodecs/WebAudio and sends
 touches back.
 
+It is also the client for the native macOS head unit: `autoapp` runs on the Mac,
+captures to `captures-mac/`, and the server runs on localhost. No tunnel or Pi is
+involved in that mode.
+
 ## Architecture
 
 ```
@@ -30,28 +34,34 @@ display/input client.
 The normal way is the launch scripts:
 
 ```bash
-# Pi
-~/auriga/scripts/pi-start.sh
-# Mac
-./scripts/mac-start.sh
+# macOS head unit, dongle on the Mac (no Pi/tunnel)
+./scripts/mac-headunit-start.sh
+
+# Pi head unit + Mac remote UI
+~/auriga/scripts/pi-start.sh   # on the Pi
+./scripts/mac-start.sh         # tunnels 8080/8081
 ```
 
-Or manually, on the Pi (while the OpenAuto capture is running):
+Or manually, on the host running OpenAuto:
 
 ```bash
-cd ~/auriga/stream
-python3 auriga_stream.py
+cd stream
+python3 auriga_stream.py \
+  --video /path/to/video.h264 \
+  --audio /path/to/audio-media.wav \
+  --fifo /tmp/auriga-in
 ```
 
-It listens on `127.0.0.1:8080` (HTTP) and `127.0.0.1:8081` (WebSocket) only.
-From the Mac, tunnel both ports:
+On the Mac head unit the paths are `captures-mac/video.h264` and
+`captures-mac/audio-media.wav`. It listens on `127.0.0.1:8080` (HTTP) and
+`127.0.0.1:8081` (WebSocket) only. Open `http://localhost:8080` in Brave (or
+Chrome). `localhost` is a secure context, which WebCodecs requires.
+
+From a remote Mac (Pi setup), tunnel both ports:
 
 ```bash
 ssh -N -L 8080:127.0.0.1:8080 -L 8081:127.0.0.1:8081 pi@auriga-pi.local
 ```
-
-Open `http://localhost:8080` in Brave (or Chrome). `localhost` is a secure
-context, which WebCodecs requires.
 
 - Audio starts **muted**; click the small 🔇 button to create/resume the
   AudioContext.

@@ -134,7 +134,10 @@ class Streamer:
 
         last_idr = find_last_idr(video_path)
         self.video_offset = last_idr if last_idr is not None else 0
-        self.audio_offset = max(AUDIO_HEADER, os.path.getsize(audio_path))
+        try:
+            self.audio_offset = max(AUDIO_HEADER, os.path.getsize(audio_path))
+        except OSError:
+            self.audio_offset = AUDIO_HEADER
         print(
             "stream: codec=%s sps=%s pps=%s video_offset=%s audio_offset=%s"
             % (
@@ -180,6 +183,10 @@ class Streamer:
         await ws.send(self.hello())
 
     async def video_loop(self):
+        # The capture files appear when the first AA session opens its video
+        # channel; wait for them instead of failing at startup.
+        while not os.path.exists(self.video_path):
+            await asyncio.sleep(0.2)
         f = open(self.video_path, "rb")
         f.seek(self.video_offset)
         buf = b""
@@ -292,6 +299,9 @@ class Streamer:
             await self.broadcast(message)
 
     async def audio_loop(self):
+        # See video_loop(): the WAV sink is created with the AA audio channel.
+        while not os.path.exists(self.audio_path):
+            await asyncio.sleep(0.2)
         f = open(self.audio_path, "rb")
         f.seek(self.audio_offset)
         remainder = b""
@@ -335,9 +345,14 @@ class Streamer:
         print("stream: client connected %s" % (peer,), flush=True)
         try:
             async with self.lock:
-                await self.send_hello(ws)
-                for message in list(self.gop):
-                    await ws.send(message)
+                try:
+                    await self.send_hello(ws)
+                    for message in list(self.gop):
+                        await ws.send(message)
+                except Exception:
+                    # Client went away between the HTTP page load and the WS
+                    # handshake; drop it without a noisy traceback.
+                    return
                 self.clients.add(ws)
             async for message in ws:
                 if not isinstance(message, str):

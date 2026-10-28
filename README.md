@@ -50,6 +50,29 @@ video, audio and input streams and later forwarding them to a real head unit.
   `2026-10-28-session2-input.jsonl`. The stream can be viewed live with
   `ffplay` over SSH; `scripts/aa-tap.sh` injects touches.
 
+**2026-10-28 macOS port: projection works**
+
+- aasdk 1.7 (`newdev` + `AASDK_MINOR = 7`) builds static for macOS with
+  Boost 1.85: `build-aasdk-mac/lib/libaasdk.a` and `libaap_protobuf.a`.
+- OpenAuto `4cc739b8` + `patches/openauto-capture.patch` +
+  `patches/openauto-macos.patch` builds `build-openauto-mac/bin/autoapp`.
+- With the dongle direct to the Mac, the dongle switched MTP `2717:ff40` ->
+  AOA `18d1:2d00`, completed AA 1.7/TLS/service discovery, and projected a full
+  1280x720 AA UI (Google Maps + Spotify) with 48 kHz stereo media audio.
+- Verified capture: 3057 H.264 frames over 122 s, 68.6 s media audio (mean
+  -16.5 dB), browser/FIFO touch input (a Spotify pause/play tap changed the
+  UI), and a WebSocket client receiving keyframes/deltas/audio on localhost.
+- Run/stop: `scripts/mac-headunit-start.sh` / `mac-headunit-stop.sh`;
+  captures go to `captures-mac/`; no Pi, hub or SSH tunnel.
+- macOS-specific fixes: Boost 1.85 (`io_service`), absl/taglib/gps include
+  roots, static-aasdk OpenSSL link symbols, a broken Bluetooth lister in
+  `SettingsWindow.cpp`, and OpenAuto's TCP-5000 listener conflicting with
+  macOS AirPlay Receiver.
+- Recovery note: if the first AA entity fails before the phone associates, the
+  dongle stays in AOA; replug it (cold boot to MTP) with phone BT/Wi-Fi on.
+  With the phone already associated, OpenAuto reconnects after the dongle's
+  first-session reset automatically.
+
 **Remaining issues**
 
 - The first AA session reset on the dongle's AA Bluetooth pairing request
@@ -63,27 +86,34 @@ video, audio and input streams and later forwarding them to a real head unit.
 - Forwarding to a real head unit still needs a Pi 4/5 (host + OTG) or a
   two-device relay.
 - Build/run/patch details are in [`openauto-plan.md`](openauto-plan.md).
-- Next: move the proven stack to macOS (dongle direct to Mac, no Pi/hub). The
-  build/run plan and blockers are in [`MAC-PORT.md`](MAC-PORT.md).
+- Next: test the physical dongle on the Mac USB path. The build/run path and
+  current status are in [`MAC-PORT.md`](MAC-PORT.md).
 
 ## Quick start
 
-Pi:
+macOS head unit (dongle direct to the Mac, no Pi):
 
 ```bash
-~/auriga/scripts/pi-start.sh
+cd /Users/tomaszwerbicki/dev/auriga
+./scripts/mac-headunit-start.sh
 ```
 
-Mac:
+Then open `http://localhost:8080` (Brave/Chrome), click the small 🔇 to enable
+audio, and tap the canvas to drive AA. Stop with
+`./scripts/mac-headunit-stop.sh`.
+
+Pi head unit (fallback) with the Mac as remote UI:
 
 ```bash
+# on the Pi
+~/auriga/scripts/pi-start.sh
+# on the Mac
 cd /Users/tomaszwerbicki/dev/auriga
 ./scripts/mac-start.sh
 ```
 
-Then open `http://localhost:8080` (Brave/Chrome), click the small 🔇 to enable
-audio, and tap the canvas to drive AA. Stop with `scripts/mac-stop.sh` and
-`~/auriga/scripts/pi-stop.sh`.
+Then open `http://localhost:8080` and click the 🔇 to enable audio. Stop with
+`scripts/mac-stop.sh` and `~/auriga/scripts/pi-stop.sh`.
 
 Full setup, pairing recovery, rebuild steps and known issues are in
 [`RUNBOOK.md`](RUNBOOK.md). The remote UI protocol is documented in
@@ -301,12 +331,17 @@ Secondary: keep OpenAuto as the capture host and use the `stream/` Mac client.
 - `MAC-PORT.md` — macOS port plan (dongle direct to Mac, no Pi).
 - `patches/openauto-capture.patch` — file-sink/video/audio/input patch applied
   to OpenAuto on the Pi.
-- `openauto-config/` — `openauto.ini`, `openauto-logs.ini`, `run.sh`.
+- `patches/openauto-macos.patch` — macOS build fixes (Bluetooth lister,
+  AirPlay/TCP-5000 conflict in capture mode).
+- `openauto-config/` — `openauto.ini`, `openauto-logs.ini`, `run.sh` (Pi),
+  `run-mac.sh` (macOS).
 - `stream/` — Pi WebSocket server + Brave/Chrome client for live video/audio
   and taps.
 - `captures/` — captured H.264/WAV/JSONL samples and extracted frames.
 - `logs/` — filtered OpenAuto run logs.
 - `scripts/aa-tap.sh` — send a tap to the live capture from the Mac.
+- `scripts/mac-headunit-start.sh`, `mac-headunit-stop.sh` — local macOS head
+  unit (no Pi); `mac-start.sh`, `mac-stop.sh` are the Pi remote-UI tunnel.
 - `aasdk/`, `build-aasdk/` — aasdk source/build on the Pi (not in this repo).
 - `scripts/aoa_probe.py` — standalone AOA switch/read.
 - `scripts/aoa_read.py` — passive bulk-IN reader.
