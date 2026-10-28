@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Auriga AA remote</title>
+  <style>
+    :root { color-scheme: dark; }
+    html, body { margin: 0; height: 100%; background: #111; color: #eee;
+      font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    #wrap { display: flex; flex-direction: column; height: 100%; }
+    #bar { display: flex; gap: 12px; align-items: center; padding: 8px 12px;
+      background: #1b1b1b; border-bottom: 1px solid #333; }
+    #status { color: #9ad; }
+    #stats { color: #777; }
+    #mute { margin-left: auto; background: #242424; color: #ddd;
+      border: 1px solid #444; border-radius: 6px; padding: 2px 9px;
+      cursor: pointer; font-size: 15px; line-height: 1.2; }
+    #mute:hover { background: #333; }
+    #screen { flex: 1; min-height: 0; width: 100%; background: #000;
+      object-fit: contain; cursor: crosshair; }
+  </style>
+</head>
+<body>
+  <div id="wrap">
+    <div id="bar">
+      <strong>Auriga</strong>
+      <span id="status">connecting…</span>
+      <span id="stats"></span>
+      <button id="mute" type="button" title="Audio muted" aria-label="Audio muted">🔇</button>
+    </div>
+    <canvas id="screen" width="1280" height="720"></canvas>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>

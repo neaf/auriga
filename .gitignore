@@ -1,0 +1,40 @@
+# Upstream source clones (pinned commits are documented in README.md)
+/openauto/
+/aasdk-upstream/
+
+# Build outputs
+/build-*/
+*.o
+*.so
+
+# Large capture media (kept locally for analysis)
+/captures/*.h264
+/captures/*.mp4
+/captures/*.wav
+/captures/*.png
+
+# Runtime logs; keep the filtered baseline
+/logs/*.log
+!/logs/run-baseline-114525.filtered.log
+
+# Python
+__pycache__/
+*.pyc
+
+# macOS
+.DS_Store
+
+# Dongle credential databases (link keys; kept locally only)
+/dongle-backup/*.db
+/dongle-backup/*.db.*
+/dongle-backup/*.bk
+/dongle-backup/*.bk.*
+/posttrip/*.db
+/posttrip/*.db.*
+/posttrip/*.bk
+/posttrip/*.bk.*
+/btapp.db*
+/btapp.bk*
+
+# Runtime PID files
+*.pid

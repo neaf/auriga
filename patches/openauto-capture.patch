@@ -1,0 +1,1101 @@
+diff --git a/include/f1x/openauto/autoapp/Projection/AurigaAudioInput.hpp b/include/f1x/openauto/autoapp/Projection/AurigaAudioInput.hpp
+new file mode 100644
+index 0000000..ae525da
+--- /dev/null
++++ b/include/f1x/openauto/autoapp/Projection/AurigaAudioInput.hpp
+@@ -0,0 +1,58 @@
++/*
++*  This file is part of openauto project.
++*
++*  Auriga capture input: a paced silent microphone source. It keeps the AA
++*  microphone channel alive without depending on PulseAudio/ALSA.
++*/
++
++#pragma once
++
++#include <atomic>
++#include <cstdint>
++#include <memory>
++#include <mutex>
++
++#include <boost/asio.hpp>
++
++#include <f1x/openauto/autoapp/Projection/IAudioInput.hpp>
++
++namespace f1x
++{
++namespace openauto
++{
++namespace autoapp
++{
++namespace projection
++{
++
++class AurigaAudioInput : public IAudioInput, public std::enable_shared_from_this<AurigaAudioInput>
++{
++public:
++    AurigaAudioInput(boost::asio::io_service& ioService, uint32_t channelCount, uint32_t sampleSize,
++                     uint32_t sampleRate);
++    ~AurigaAudioInput() override;
++
++    bool open() override;
++    bool isActive() const override;
++    void read(ReadPromise::Pointer promise) override;
++    void start(StartPromise::Pointer promise) override;
++    void stop() override;
++
++    uint32_t getSampleSize() const override;
++    uint32_t getChannelCount() const override;
++    uint32_t getSampleRate() const override;
++
++private:
++    boost::asio::deadline_timer timer_;
++    mutable std::mutex mutex_;
++    ReadPromise::Pointer readPromise_;
++    std::atomic<bool> active_;
++    uint32_t channelCount_;
++    uint32_t sampleSize_;
++    uint32_t sampleRate_;
++};
++
++}
++}
++}
++}
+diff --git a/include/f1x/openauto/autoapp/Projection/AurigaAudioOutput.hpp b/include/f1x/openauto/autoapp/Projection/AurigaAudioOutput.hpp
+new file mode 100644
+index 0000000..320ef65
+--- /dev/null
++++ b/include/f1x/openauto/autoapp/Projection/AurigaAudioOutput.hpp
+@@ -0,0 +1,60 @@
++/*
++*  This file is part of openauto project.
++*
++*  Auriga capture output: writes each AA audio channel to its own WAV file.
++*  Selected only when AURIGA_CAPTURE_DIR is set.
++*/
++
++#pragma once
++
++#include <cstdint>
++#include <fstream>
++#include <mutex>
++#include <string>
++
++#include <f1x/openauto/autoapp/Projection/IAudioOutput.hpp>
++
++namespace f1x
++{
++namespace openauto
++{
++namespace autoapp
++{
++namespace projection
++{
++
++class AurigaAudioOutput : public IAudioOutput
++{
++public:
++    AurigaAudioOutput(std::string path, uint32_t channelCount, uint32_t sampleSize, uint32_t sampleRate);
++    ~AurigaAudioOutput() override;
++
++    bool open() override;
++    void write(aasdk::messenger::Timestamp::ValueType timestamp,
++               const aasdk::common::DataConstBuffer& buffer) override;
++    void start() override;
++    void stop() override;
++    void suspend() override;
++
++    uint32_t getSampleSize() const override;
++    uint32_t getChannelCount() const override;
++    uint32_t getSampleRate() const override;
++
++private:
++    void writeHeader();
++    void updateHeader();
++
++    std::string path_;
++    std::ofstream file_;
++    std::mutex mutex_;
++    uint32_t channelCount_;
++    uint32_t sampleSize_;
++    uint32_t sampleRate_;
++    uint64_t dataBytes_;
++    uint64_t lastHeaderUpdate_;
++};
++
++}
++}
++}
++}
+diff --git a/include/f1x/openauto/autoapp/Projection/AurigaInputDevice.hpp b/include/f1x/openauto/autoapp/Projection/AurigaInputDevice.hpp
+new file mode 100644
+index 0000000..a67fc6c
+--- /dev/null
++++ b/include/f1x/openauto/autoapp/Projection/AurigaInputDevice.hpp
+@@ -0,0 +1,62 @@
++/*
++*  This file is part of openauto project.
++*
++*  Auriga capture input: reads touch commands from stdin/FIFO, logs them as
++*  JSONL and forwards them to the AA input channel. Replaces the Qt widget
++*  based InputDevice when AURIGA_CAPTURE_DIR is set.
++*/
++
++#pragma once
++
++#include <atomic>
++#include <fstream>
++#include <mutex>
++#include <string>
++#include <thread>
++
++#include <QRect>
++
++#include <f1x/openauto/autoapp/Projection/IInputDevice.hpp>
++
++namespace f1x
++{
++namespace openauto
++{
++namespace autoapp
++{
++namespace projection
++{
++
++class AurigaInputDevice : public IInputDevice
++{
++public:
++    AurigaInputDevice(std::string jsonlPath, QRect touchscreenGeometry);
++    ~AurigaInputDevice() override;
++
++    void start(IInputDeviceEventHandler& eventHandler) override;
++    void stop() override;
++    ButtonCodes getSupportedButtonCodes() const override;
++    bool hasTouchscreen() const override;
++    QRect getTouchscreenGeometry() const override;
++
++private:
++    void readerLoop();
++    void handleCommand(const std::string& line);
++    void sendTouch(aap_protobuf::service::inputsource::message::PointerAction action,
++                   uint32_t x, uint32_t y);
++    void logEvent(const std::string& command, uint32_t x, uint32_t y);
++
++    std::string jsonlPath_;
++    QRect touchscreenGeometry_;
++    IInputDeviceEventHandler* eventHandler_;
++    std::ofstream log_;
++    std::mutex mutex_;
++    std::atomic<bool> running_;
++    std::thread reader_;
++    std::string pending_;
++};
++
++}
++}
++}
++}
+diff --git a/include/f1x/openauto/autoapp/Projection/AurigaVideoOutput.hpp b/include/f1x/openauto/autoapp/Projection/AurigaVideoOutput.hpp
+new file mode 100644
+index 0000000..93eb8f6
+--- /dev/null
++++ b/include/f1x/openauto/autoapp/Projection/AurigaVideoOutput.hpp
+@@ -0,0 +1,47 @@
++/*
++*  This file is part of openauto project.
++*
++*  Auriga capture output: writes the raw H.264 stream to a file instead of
++*  decoding it through Qt Multimedia. Selected only when AURIGA_CAPTURE_DIR is
++*  set, so normal OpenAuto behaviour is unchanged.
++*/
++
++#pragma once
++
++#include <fstream>
++#include <mutex>
++#include <string>
++
++#include <f1x/openauto/autoapp/Projection/VideoOutput.hpp>
++
++namespace f1x
++{
++namespace openauto
++{
++namespace autoapp
++{
++namespace projection
++{
++
++class AurigaVideoOutput : public VideoOutput
++{
++public:
++    AurigaVideoOutput(configuration::IConfiguration::Pointer configuration, std::string path);
++    ~AurigaVideoOutput() override;
++
++    bool open() override;
++    bool init() override;
++    void write(aasdk::messenger::Timestamp::ValueType timestamp,
++               const aasdk::common::DataConstBuffer& buffer) override;
++    void stop() override;
++
++private:
++    std::string path_;
++    std::ofstream file_;
++    std::mutex mutex_;
++};
++
++}
++}
++}
++}
+diff --git a/src/autoapp/Projection/AurigaAudioInput.cpp b/src/autoapp/Projection/AurigaAudioInput.cpp
+new file mode 100644
+index 0000000..4b48c23
+--- /dev/null
++++ b/src/autoapp/Projection/AurigaAudioInput.cpp
+@@ -0,0 +1,132 @@
++/*
++*  This file is part of openauto project.
++*
++*  Auriga capture input: paced silence for the microphone channel.
++*/
++
++#include <f1x/openauto/Common/Log.hpp>
++#include <f1x/openauto/autoapp/Projection/AurigaAudioInput.hpp>
++
++namespace f1x
++{
++namespace openauto
++{
++namespace autoapp
++{
++namespace projection
++{
++
++AurigaAudioInput::AurigaAudioInput(boost::asio::io_service& ioService, uint32_t channelCount,
++                                   uint32_t sampleSize, uint32_t sampleRate)
++    : timer_(ioService)
++    , active_(false)
++    , channelCount_(channelCount)
++    , sampleSize_(sampleSize)
++    , sampleRate_(sampleRate)
++{
++}
++
++AurigaAudioInput::~AurigaAudioInput()
++{
++    this->stop();
++}
++
++bool AurigaAudioInput::open()
++{
++    return true;
++}
++
++bool AurigaAudioInput::isActive() const
++{
++    std::lock_guard<std::mutex> lock(mutex_);
++    return active_;
++}
++
++void AurigaAudioInput::start(StartPromise::Pointer promise)
++{
++    {
++        std::lock_guard<std::mutex> lock(mutex_);
++        active_ = true;
++    }
++
++    OPENAUTO_LOG(info) << "[AurigaAudioInput] silent microphone started";
++    promise->resolve();
++}
++
++void AurigaAudioInput::read(ReadPromise::Pointer promise)
++{
++    {
++        std::lock_guard<std::mutex> lock(mutex_);
++
++        if (!active_ || readPromise_ != nullptr)
++        {
++            promise->reject();
++            return;
++        }
++
++        readPromise_ = std::move(promise);
++    }
++
++    auto self = this->shared_from_this();
++    timer_.expires_from_now(boost::posix_time::milliseconds(20));
++    timer_.async_wait([self](const boost::system::error_code& error) {
++        if (error)
++        {
++            return;
++        }
++
++        ReadPromise::Pointer pending;
++        {
++            std::lock_guard<std::mutex> lock(self->mutex_);
++            pending = std::move(self->readPromise_);
++        }
++
++        if (pending == nullptr)
++        {
++            return;
++        }
++
++        const size_t bytes = static_cast<size_t>(self->sampleRate_ / 50) *
++                             self->channelCount_ * (self->sampleSize_ / 8);
++        aasdk::common::Data data(bytes, 0);
++        pending->resolve(std::move(data));
++    });
++}
++
++void AurigaAudioInput::stop()
++{
++    ReadPromise::Pointer pending;
++
++    {
++        std::lock_guard<std::mutex> lock(mutex_);
++        active_ = false;
++        pending = std::move(readPromise_);
++    }
++
++    timer_.cancel();
++
++    if (pending != nullptr)
++    {
++        pending->reject();
++    }
++}
++
++uint32_t AurigaAudioInput::getSampleSize() const
++{
++    return sampleSize_;
++}
++
++uint32_t AurigaAudioInput::getChannelCount() const
++{
++    return channelCount_;
++}
++
++uint32_t AurigaAudioInput::getSampleRate() const
++{
++    return sampleRate_;
++}
++
++}
++}
++}
++}
+diff --git a/src/autoapp/Projection/AurigaAudioOutput.cpp b/src/autoapp/Projection/AurigaAudioOutput.cpp
+new file mode 100644
+index 0000000..2d4c40c
+--- /dev/null
++++ b/src/autoapp/Projection/AurigaAudioOutput.cpp
+@@ -0,0 +1,182 @@
++/*
++*  This file is part of openauto project.
++*
++*  Auriga capture output: PCM WAV writer.
++*/
++
++#include <f1x/openauto/Common/Log.hpp>
++#include <f1x/openauto/autoapp/Projection/AurigaAudioOutput.hpp>
++
++namespace f1x
++{
++namespace openauto
++{
++namespace autoapp
++{
++namespace projection
++{
++
++namespace
++{
++
++void writeLE16(std::ofstream& file, uint16_t value)
++{
++    char bytes[2] = { static_cast<char>(value & 0xff),
++                      static_cast<char>((value >> 8) & 0xff) };
++    file.write(bytes, sizeof(bytes));
++}
++
++void writeLE32(std::ofstream& file, uint32_t value)
++{
++    char bytes[4] = { static_cast<char>(value & 0xff),
++                      static_cast<char>((value >> 8) & 0xff),
++                      static_cast<char>((value >> 16) & 0xff),
++                      static_cast<char>((value >> 24) & 0xff) };
++    file.write(bytes, sizeof(bytes));
++}
++
++void writeFourCC(std::ofstream& file, const char* value)
++{
++    file.write(value, 4);
++}
++
++}
++
++AurigaAudioOutput::AurigaAudioOutput(std::string path, uint32_t channelCount, uint32_t sampleSize,
++                                     uint32_t sampleRate)
++    : path_(std::move(path))
++    , channelCount_(channelCount)
++    , sampleSize_(sampleSize)
++    , sampleRate_(sampleRate)
++    , dataBytes_(0)
++    , lastHeaderUpdate_(0)
++{
++}
++
++AurigaAudioOutput::~AurigaAudioOutput()
++{
++    this->stop();
++}
++
++bool AurigaAudioOutput::open()
++{
++    std::lock_guard<std::mutex> lock(mutex_);
++
++    if (file_.is_open())
++    {
++        return true;
++    }
++
++    file_.open(path_, std::ios::binary | std::ios::trunc);
++    if (!file_.is_open())
++    {
++        OPENAUTO_LOG(error) << "[AurigaAudioOutput] cannot open " << path_;
++        return false;
++    }
++
++    dataBytes_ = 0;
++    lastHeaderUpdate_ = 0;
++    this->writeHeader();
++
++    OPENAUTO_LOG(info) << "[AurigaAudioOutput] writing " << path_ << " ("
++                       << sampleRate_ << " Hz, " << channelCount_ << " ch, "
++                       << sampleSize_ << " bit)";
++    return true;
++}
++
++void AurigaAudioOutput::write(aasdk::messenger::Timestamp::ValueType,
++                              const aasdk::common::DataConstBuffer& buffer)
++{
++    std::lock_guard<std::mutex> lock(mutex_);
++
++    if (!file_.is_open())
++    {
++        return;
++    }
++
++    file_.write(reinterpret_cast<const char*>(buffer.cdata),
++                static_cast<std::streamsize>(buffer.size));
++    dataBytes_ += buffer.size;
++
++    const uint64_t bytesPerSecond =
++        static_cast<uint64_t>(sampleRate_) * channelCount_ * (sampleSize_ / 8);
++    if (bytesPerSecond > 0 && dataBytes_ - lastHeaderUpdate_ >= bytesPerSecond)
++    {
++        this->updateHeader();
++    }
++}
++
++void AurigaAudioOutput::start()
++{
++}
++
++void AurigaAudioOutput::stop()
++{
++    std::lock_guard<std::mutex> lock(mutex_);
++
++    if (file_.is_open())
++    {
++        this->updateHeader();
++        file_.flush();
++        file_.close();
++        OPENAUTO_LOG(info) << "[AurigaAudioOutput] closed " << path_;
++    }
++}
++
++void AurigaAudioOutput::suspend()
++{
++}
++
++uint32_t AurigaAudioOutput::getSampleSize() const
++{
++    return sampleSize_;
++}
++
++uint32_t AurigaAudioOutput::getChannelCount() const
++{
++    return channelCount_;
++}
++
++uint32_t AurigaAudioOutput::getSampleRate() const
++{
++    return sampleRate_;
++}
++
++void AurigaAudioOutput::writeHeader()
++{
++    file_.seekp(0);
++
++    writeFourCC(file_, "RIFF");
++    writeLE32(file_, static_cast<uint32_t>(36 + dataBytes_));
++    writeFourCC(file_, "WAVE");
++
++    writeFourCC(file_, "fmt ");
++    writeLE32(file_, 16);
++    writeLE16(file_, 1); // PCM
++    writeLE16(file_, static_cast<uint16_t>(channelCount_));
++    writeLE32(file_, sampleRate_);
++    writeLE32(file_, sampleRate_ * channelCount_ * (sampleSize_ / 8));
++    writeLE16(file_, static_cast<uint16_t>(channelCount_ * (sampleSize_ / 8)));
++    writeLE16(file_, static_cast<uint16_t>(sampleSize_));
++
++    writeFourCC(file_, "data");
++    writeLE32(file_, static_cast<uint32_t>(dataBytes_));
++
++    file_.seekp(0, std::ios::end);
++}
++
++void AurigaAudioOutput::updateHeader()
++{
++    if (!file_.is_open())
++    {
++        return;
++    }
++
++    this->writeHeader();
++    lastHeaderUpdate_ = dataBytes_;
++}
++
++}
++}
++}
++}
+diff --git a/src/autoapp/Projection/AurigaInputDevice.cpp b/src/autoapp/Projection/AurigaInputDevice.cpp
+new file mode 100644
+index 0000000..d1d6b3a
+--- /dev/null
++++ b/src/autoapp/Projection/AurigaInputDevice.cpp
+@@ -0,0 +1,235 @@
++/*
++*  This file is part of openauto project.
++*
++*  Auriga capture input: stdin/FIFO touch injection and JSONL logging.
++*/
++
++#include <chrono>
++#include <poll.h>
++#include <sstream>
++#include <thread>
++#include <unistd.h>
++
++#include <aap_protobuf/service/inputsource/message/PointerAction.pb.h>
++#include <aap_protobuf/service/media/sink/message/KeyCode.pb.h>
++
++#include <f1x/openauto/Common/Log.hpp>
++#include <f1x/openauto/autoapp/Projection/AurigaInputDevice.hpp>
++
++namespace f1x
++{
++namespace openauto
++{
++namespace autoapp
++{
++namespace projection
++{
++
++AurigaInputDevice::AurigaInputDevice(std::string jsonlPath, QRect touchscreenGeometry)
++    : jsonlPath_(std::move(jsonlPath))
++    , touchscreenGeometry_(std::move(touchscreenGeometry))
++    , eventHandler_(nullptr)
++    , running_(false)
++{
++}
++
++AurigaInputDevice::~AurigaInputDevice()
++{
++    this->stop();
++}
++
++void AurigaInputDevice::start(IInputDeviceEventHandler& eventHandler)
++{
++    if (running_.exchange(true))
++    {
++        return;
++    }
++
++    eventHandler_ = &eventHandler;
++    log_.open(jsonlPath_, std::ios::out | std::ios::trunc);
++    if (!log_.is_open())
++    {
++        OPENAUTO_LOG(warning) << "[AurigaInputDevice] cannot open " << jsonlPath_;
++    }
++
++    OPENAUTO_LOG(info) << "[AurigaInputDevice] reading touch commands from stdin, log "
++                       << jsonlPath_;
++    reader_ = std::thread([this]() { this->readerLoop(); });
++}
++
++void AurigaInputDevice::stop()
++{
++    running_ = false;
++
++    if (reader_.joinable())
++    {
++        reader_.join();
++    }
++
++    std::lock_guard<std::mutex> lock(mutex_);
++    eventHandler_ = nullptr;
++
++    if (log_.is_open())
++    {
++        log_.flush();
++        log_.close();
++    }
++}
++
++IInputDevice::ButtonCodes AurigaInputDevice::getSupportedButtonCodes() const
++{
++    using aap_protobuf::service::media::sink::message::KeyCode;
++
++    return {
++        KeyCode::KEYCODE_HOME,
++        KeyCode::KEYCODE_BACK,
++        KeyCode::KEYCODE_MENU,
++        KeyCode::KEYCODE_APP_SWITCH,
++        KeyCode::KEYCODE_DPAD_UP,
++        KeyCode::KEYCODE_DPAD_DOWN,
++        KeyCode::KEYCODE_DPAD_LEFT,
++        KeyCode::KEYCODE_DPAD_RIGHT,
++        KeyCode::KEYCODE_DPAD_CENTER,
++        KeyCode::KEYCODE_MEDIA_PLAY,
++        KeyCode::KEYCODE_MEDIA_PAUSE,
++        KeyCode::KEYCODE_MEDIA_PLAY_PAUSE,
++        KeyCode::KEYCODE_MEDIA_STOP,
++        KeyCode::KEYCODE_MEDIA_NEXT,
++        KeyCode::KEYCODE_MEDIA_PREVIOUS,
++        KeyCode::KEYCODE_MEDIA_FAST_FORWARD,
++        KeyCode::KEYCODE_MEDIA_REWIND,
++        KeyCode::KEYCODE_CALL,
++        KeyCode::KEYCODE_ENDCALL,
++        KeyCode::KEYCODE_SEARCH,
++        KeyCode::KEYCODE_ASSIST,
++        KeyCode::KEYCODE_VOICE_ASSIST,
++        KeyCode::KEYCODE_NAVIGATION,
++        KeyCode::KEYCODE_ROTARY_CONTROLLER
++    };
++}
++
++bool AurigaInputDevice::hasTouchscreen() const
++{
++    return true;
++}
++
++QRect AurigaInputDevice::getTouchscreenGeometry() const
++{
++    return touchscreenGeometry_;
++}
++
++void AurigaInputDevice::readerLoop()
++{
++    while (running_)
++    {
++        struct pollfd descriptor;
++        descriptor.fd = STDIN_FILENO;
++        descriptor.events = POLLIN;
++        descriptor.revents = 0;
++
++        const int ready = ::poll(&descriptor, 1, 200);
++        if (ready <= 0 || (descriptor.revents & POLLIN) == 0)
++        {
++            continue;
++        }
++
++        char buffer[4096];
++        const ssize_t count = ::read(STDIN_FILENO, buffer, sizeof(buffer));
++        if (count <= 0)
++        {
++            break;
++        }
++
++        pending_.append(buffer, static_cast<size_t>(count));
++
++        size_t newline;
++        while ((newline = pending_.find('\n')) != std::string::npos)
++        {
++            const std::string line = pending_.substr(0, newline);
++            pending_.erase(0, newline + 1);
++            this->handleCommand(line);
++        }
++    }
++}
++
++void AurigaInputDevice::handleCommand(const std::string& line)
++{
++    std::istringstream stream(line);
++    std::string command;
++    uint32_t x = 0;
++    uint32_t y = 0;
++
++    if (!(stream >> command))
++    {
++        return;
++    }
++
++    if (command == "tap" && (stream >> x >> y))
++    {
++        this->logEvent(command, x, y);
++        this->sendTouch(aap_protobuf::service::inputsource::message::PointerAction::ACTION_DOWN, x, y);
++        std::this_thread::sleep_for(std::chrono::milliseconds(80));
++        this->sendTouch(aap_protobuf::service::inputsource::message::PointerAction::ACTION_UP, x, y);
++    }
++    else if (command == "down" && (stream >> x >> y))
++    {
++        this->logEvent(command, x, y);
++        this->sendTouch(aap_protobuf::service::inputsource::message::PointerAction::ACTION_DOWN, x, y);
++    }
++    else if (command == "move" && (stream >> x >> y))
++    {
++        this->logEvent(command, x, y);
++        this->sendTouch(aap_protobuf::service::inputsource::message::PointerAction::ACTION_MOVED, x, y);
++    }
++    else if (command == "up" && (stream >> x >> y))
++    {
++        this->logEvent(command, x, y);
++        this->sendTouch(aap_protobuf::service::inputsource::message::PointerAction::ACTION_UP, x, y);
++    }
++    else if (command == "quit")
++    {
++        running_ = false;
++    }
++    else
++    {
++        OPENAUTO_LOG(warning) << "[AurigaInputDevice] unknown command: " << line;
++    }
++}
++
++void AurigaInputDevice::sendTouch(
++    aap_protobuf::service::inputsource::message::PointerAction action, uint32_t x, uint32_t y)
++{
++    if (eventHandler_ == nullptr)
++    {
++        OPENAUTO_LOG(warning) << "[AurigaInputDevice] touch ignored, handler not ready";
++        return;
++    }
++
++    TouchEvent event;
++    event.type = action;
++    event.actionIndex = 0;
++    event.pointers.push_back({x, y, 0});
++    eventHandler_->onTouchEvent(event);
++}
++
++void AurigaInputDevice::logEvent(const std::string& command, uint32_t x, uint32_t y)
++{
++    std::lock_guard<std::mutex> lock(mutex_);
++
++    if (!log_.is_open())
++    {
++        return;
++    }
++
++    const auto timestamp = std::chrono::duration_cast<std::chrono::microseconds>(
++        std::chrono::system_clock::now().time_since_epoch());
++
++    log_ << "{\"ts\":" << timestamp.count() << ",\"cmd\":\"" << command
++         << "\",\"x\":" << x << ",\"y\":" << y << "}\n";
++    log_.flush();
++}
++
++}
++}
++}
++}
+diff --git a/src/autoapp/Projection/AurigaVideoOutput.cpp b/src/autoapp/Projection/AurigaVideoOutput.cpp
+new file mode 100644
+index 0000000..aed5f9e
+--- /dev/null
++++ b/src/autoapp/Projection/AurigaVideoOutput.cpp
+@@ -0,0 +1,85 @@
++/*
++*  This file is part of openauto project.
++*
++*  Auriga capture output: appends H.264 Annex-B access units to a file.
++*/
++
++#include <f1x/openauto/Common/Log.hpp>
++#include <f1x/openauto/autoapp/Projection/AurigaVideoOutput.hpp>
++
++namespace f1x
++{
++namespace openauto
++{
++namespace autoapp
++{
++namespace projection
++{
++
++AurigaVideoOutput::AurigaVideoOutput(configuration::IConfiguration::Pointer configuration, std::string path)
++    : VideoOutput(std::move(configuration))
++    , path_(std::move(path))
++{
++}
++
++AurigaVideoOutput::~AurigaVideoOutput()
++{
++    this->stop();
++}
++
++bool AurigaVideoOutput::open()
++{
++    std::lock_guard<std::mutex> lock(mutex_);
++
++    if (file_.is_open())
++    {
++        return true;
++    }
++
++    file_.open(path_, std::ios::binary | std::ios::trunc);
++    if (!file_.is_open())
++    {
++        OPENAUTO_LOG(error) << "[AurigaVideoOutput] cannot open " << path_;
++        return false;
++    }
++
++    OPENAUTO_LOG(info) << "[AurigaVideoOutput] writing " << path_;
++    return true;
++}
++
++bool AurigaVideoOutput::init()
++{
++    return true;
++}
++
++void AurigaVideoOutput::write(aasdk::messenger::Timestamp::ValueType,
++                              const aasdk::common::DataConstBuffer& buffer)
++{
++    std::lock_guard<std::mutex> lock(mutex_);
++
++    if (!file_.is_open())
++    {
++        return;
++    }
++
++    file_.write(reinterpret_cast<const char*>(buffer.cdata),
++                static_cast<std::streamsize>(buffer.size));
++    file_.flush();
++}
++
++void AurigaVideoOutput::stop()
++{
++    std::lock_guard<std::mutex> lock(mutex_);
++
++    if (file_.is_open())
++    {
++        file_.flush();
++        file_.close();
++        OPENAUTO_LOG(info) << "[AurigaVideoOutput] closed " << path_;
++    }
++}
++
++}
++}
++}
++}
+diff --git a/src/autoapp/Service/Sensor/SensorService.cpp b/src/autoapp/Service/Sensor/SensorService.cpp
+index f7368b6..978ca42 100644
+--- a/src/autoapp/Service/Sensor/SensorService.cpp
++++ b/src/autoapp/Service/Sensor/SensorService.cpp
+@@ -221,7 +221,7 @@ namespace f1x::openauto::autoapp::service::sensor {
+   }
+ 
+   void SensorService::sensorPolling() {
+-    OPENAUTO_LOG(info) << "[SensorService] sensorPolling()";
++    OPENAUTO_LOG(debug) << "[SensorService] sensorPolling()";
+     if (!this->stopPolling.load(std::memory_order_acquire)) {
+       strand_.dispatch([this, self = this->shared_from_this()]() {
+         // Check stopPolling again inside the dispatched handler to catch late stop() calls
+@@ -267,7 +267,7 @@ namespace f1x::openauto::autoapp::service::sensor {
+   }
+ 
+   bool SensorService::is_file_exist(const char *fileName) {
+-    OPENAUTO_LOG(info) << "[SensorService] is_file_exist()";
++    OPENAUTO_LOG(debug) << "[SensorService] is_file_exist()";
+     std::ifstream ifile(fileName, std::ios::in);
+     return ifile.good();
+   }
+diff --git a/src/autoapp/Service/ServiceFactory.cpp b/src/autoapp/Service/ServiceFactory.cpp
+index 6c04ab2..cccc35f 100644
+--- a/src/autoapp/Service/ServiceFactory.cpp
++++ b/src/autoapp/Service/ServiceFactory.cpp
+@@ -19,6 +19,10 @@
+ #include <QApplication>
+ #include <QScreen>
+ 
++#include <cstdlib>
++#include <filesystem>
++#include <string>
++
+ #include <aasdk/Channel/MediaSink/Audio/Channel/MediaAudioChannel.hpp>
+ #include <aasdk/Channel/MediaSink/Audio/Channel/SystemAudioChannel.hpp>
+ #include <aasdk/Channel/MediaSink/Audio/Channel/GuidanceAudioChannel.hpp>
+@@ -44,11 +48,57 @@
+ #include <f1x/openauto/autoapp/Projection/QtAudioOutput.hpp>
+ #include <f1x/openauto/autoapp/Projection/QtAudioInput.hpp>
+ #include <f1x/openauto/autoapp/Projection/InputDevice.hpp>
++#include <f1x/openauto/autoapp/Projection/AurigaAudioInput.hpp>
++#include <f1x/openauto/autoapp/Projection/AurigaAudioOutput.hpp>
++#include <f1x/openauto/autoapp/Projection/AurigaInputDevice.hpp>
++#include <f1x/openauto/autoapp/Projection/AurigaVideoOutput.hpp>
+ #include <f1x/openauto/autoapp/Projection/LocalBluetoothDevice.hpp>
+ #include <f1x/openauto/autoapp/Projection/DummyBluetoothDevice.hpp>
+ 
+ namespace f1x::openauto::autoapp::service {
+ 
++  namespace {
++    // Capture mode is opt-in: setting AURIGA_CAPTURE_DIR switches the video,
++    // audio, microphone and input backends to file/FIFO sinks. Without it,
++    // OpenAuto behaves exactly as before.
++    const std::string &captureDir() {
++      static const std::string dir = []() {
++        const char *value = std::getenv("AURIGA_CAPTURE_DIR");
++        if (value == nullptr || *value == '\0') {
++          return std::string();
++        }
++
++        std::error_code error;
++        std::filesystem::create_directories(value, error);
++        if (error) {
++          OPENAUTO_LOG(warning) << "[ServiceFactory] cannot create capture dir "
++                                << value << ": " << error.message();
++        }
++        return std::string(value);
++      }();
++
++      return dir;
++    }
++
++    projection::IAudioOutput::Pointer
++    makeAudioOutput(const std::string &name, uint32_t channelCount, uint32_t sampleSize,
++                    uint32_t sampleRate, configuration::IConfiguration::Pointer configuration) {
++      if (!captureDir().empty()) {
++        return std::make_shared<projection::AurigaAudioOutput>(
++            captureDir() + "/audio-" + name + ".wav", channelCount, sampleSize, sampleRate);
++      }
++
++      if (configuration->getAudioOutputBackendType() ==
++          configuration::AudioOutputBackendType::RTAUDIO) {
++        return std::make_shared<projection::RtAudioOutput>(channelCount, sampleSize, sampleRate);
++      }
++
++      return projection::IAudioOutput::Pointer(
++          new projection::QtAudioOutput(channelCount, sampleSize, sampleRate),
++          std::bind(&QObject::deleteLater, std::placeholders::_1));
++    }
++  }
++
+   ServiceFactory::ServiceFactory(boost::asio::io_service &ioService,
+                                  configuration::IConfiguration::Pointer configuration)
+       : ioService_(ioService), configuration_(std::move(configuration)) {
+@@ -111,11 +161,17 @@ namespace f1x::openauto::autoapp::service {
+         break;
+     }
+ 
+-    QScreen *screen = QGuiApplication::primaryScreen();
+-    QRect screenGeometry = screen == nullptr ? QRect(0, 0, 1, 1) : screen->geometry();
+-    projection::IInputDevice::Pointer inputDevice(
+-        std::make_shared<projection::InputDevice>(*QApplication::instance(), configuration_,
+-                                                  std::move(screenGeometry), std::move(videoGeometry)));
++    projection::IInputDevice::Pointer inputDevice;
++    if (!captureDir().empty()) {
++      inputDevice = std::make_shared<projection::AurigaInputDevice>(
++          captureDir() + "/input.jsonl", videoGeometry);
++    } else {
++      QScreen *screen = QGuiApplication::primaryScreen();
++      QRect screenGeometry = screen == nullptr ? QRect(0, 0, 1, 1) : screen->geometry();
++      inputDevice = std::make_shared<projection::InputDevice>(
++          *QApplication::instance(), configuration_, std::move(screenGeometry),
++          std::move(videoGeometry));
++    }
+ 
+     return std::make_shared<inputsource::InputSourceService>(ioService_, messenger, std::move(inputDevice));
+   }
+@@ -125,11 +181,7 @@ namespace f1x::openauto::autoapp::service {
+     OPENAUTO_LOG(info) << "[ServiceFactory] createMediaSinkServices()";
+     if (configuration_->musicAudioChannelEnabled()) {
+       OPENAUTO_LOG(info) << "[ServiceFactory] Media Audio Channel enabled";
+-      auto mediaAudioOutput =
+-          configuration_->getAudioOutputBackendType() == configuration::AudioOutputBackendType::RTAUDIO ?
+-          std::make_shared<projection::RtAudioOutput>(2, 16, 48000) :
+-          projection::IAudioOutput::Pointer(new projection::QtAudioOutput(2, 16, 48000),
+-                                            std::bind(&QObject::deleteLater, std::placeholders::_1));
++      auto mediaAudioOutput = makeAudioOutput("media", 2, 16, 48000, configuration_);
+ 
+       serviceList.emplace_back(
+           std::make_shared<mediasink::MediaAudioService>(ioService_, messenger, std::move(mediaAudioOutput)));
+@@ -137,11 +189,7 @@ namespace f1x::openauto::autoapp::service {
+ 
+     if (configuration_->guidanceAudioChannelEnabled()) {
+       OPENAUTO_LOG(info) << "[ServiceFactory] Guidance Audio Channel enabled";
+-      auto guidanceAudioOutput =
+-          configuration_->getAudioOutputBackendType() == configuration::AudioOutputBackendType::RTAUDIO ?
+-          std::make_shared<projection::RtAudioOutput>(1, 16, 16000) :
+-          projection::IAudioOutput::Pointer(new projection::QtAudioOutput(1, 16, 16000),
+-                                            std::bind(&QObject::deleteLater, std::placeholders::_1));
++      auto guidanceAudioOutput = makeAudioOutput("guidance", 1, 16, 16000, configuration_);
+ 
+       serviceList.emplace_back(
+           std::make_shared<mediasink::GuidanceAudioService>(ioService_, messenger,
+@@ -167,11 +215,7 @@ namespace f1x::openauto::autoapp::service {
+      */
+ 
+     OPENAUTO_LOG(info) << "[ServiceFactory] System Audio Channel enabled";
+-    auto systemAudioOutput =
+-        configuration_->getAudioOutputBackendType() == configuration::AudioOutputBackendType::RTAUDIO ?
+-        std::make_shared<projection::RtAudioOutput>(1, 16, 16000) :
+-        projection::IAudioOutput::Pointer(new projection::QtAudioOutput(1, 16, 16000),
+-                                          std::bind(&QObject::deleteLater, std::placeholders::_1));
++    auto systemAudioOutput = makeAudioOutput("system", 1, 16, 16000, configuration_);
+ 
+     serviceList.emplace_back(
+         std::make_shared<mediasink::SystemAudioService>(ioService_, messenger, std::move(systemAudioOutput)));
+@@ -179,8 +223,15 @@ namespace f1x::openauto::autoapp::service {
+ #ifdef USE_OMX
+     auto videoOutput(std::make_shared<projection::OMXVideoOutput>(configuration_));
+ #else
+-    projection::IVideoOutput::Pointer videoOutput(new projection::QtVideoOutput(configuration_),
+-                                                  std::bind(&QObject::deleteLater, std::placeholders::_1));
++    projection::IVideoOutput::Pointer videoOutput;
++    if (!captureDir().empty()) {
++      videoOutput = std::make_shared<projection::AurigaVideoOutput>(
++          configuration_, captureDir() + "/video.h264");
++    } else {
++      videoOutput = projection::IVideoOutput::Pointer(
++          new projection::QtVideoOutput(configuration_),
++          std::bind(&QObject::deleteLater, std::placeholders::_1));
++    }
+ #endif
+ 
+     OPENAUTO_LOG(info) << "[ServiceFactory] Video Channel enabled";
+@@ -191,8 +242,14 @@ namespace f1x::openauto::autoapp::service {
+   void ServiceFactory::createMediaSourceServices(f1x::openauto::autoapp::service::ServiceList &serviceList,
+                                                  aasdk::messenger::IMessenger::Pointer messenger) {
+     OPENAUTO_LOG(info) << "[ServiceFactory] createMediaSourceServices()";
+-    projection::IAudioInput::Pointer audioInput(new projection::QtAudioInput(1, 16, 16000),
+-                                                std::bind(&QObject::deleteLater, std::placeholders::_1));
++    projection::IAudioInput::Pointer audioInput;
++    if (!captureDir().empty()) {
++      audioInput = std::make_shared<projection::AurigaAudioInput>(ioService_, 1, 16, 16000);
++    } else {
++      audioInput = projection::IAudioInput::Pointer(
++          new projection::QtAudioInput(1, 16, 16000),
++          std::bind(&QObject::deleteLater, std::placeholders::_1));
++    }
+     serviceList.emplace_back(std::make_shared<mediasource::MicrophoneMediaSourceService>(ioService_, messenger,
+                                                                                          std::move(audioInput)));
+   }
