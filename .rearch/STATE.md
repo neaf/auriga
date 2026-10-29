@@ -3,7 +3,8 @@
 Project: Android Auto head unit + capture rig (OpenAuto on macOS, AutoLink dongle relay, local H.264/PCM stream).
 Branch: rearch/2026-10-29
 Base tag: rearch-base (bfd7903)
-Stage: 4 (architecture and phase plan)
+Stage: 5 (phase execution)
+Phase: 1 of 7 (topic docs from audit facts), not started
 
 ## Done
 - Stage 0 setup: branch/tag, baseline build + static checks, manual checklist
@@ -13,6 +14,8 @@ Stage: 4 (architecture and phase plan)
   `33e7d48`
 - Stage 3 requirements: 54 FR (47 kept, 11 dropped), 8 NFR, 8 CON; all open
   questions resolved. `5d6c8ce`
+- Stage 4 architecture: 7 phases approved by user; cleanup moved to Stage 6.
+  `a1ad814`
 
 ## Decisions
 - 2026-10-29: treat M1-M8 as passing at baseline; user call ("assume everything works").
@@ -29,9 +32,10 @@ Stage: 4 (architecture and phase plan)
 - 2026-10-29 Q9: drop the phone-app design branch.
 - 2026-10-29 Q10: add a one-command patch-apply + build script.
 - 2026-10-29: keep rename to Auriga; drop the USB-hub-error retry path.
+- 2026-10-29: architecture and 7-phase plan approved as written.
 
 ## Next prompt
 ```
 Use the rearchitect skill. Continue from .rearch/STATE.md.
-Next: Stage 4 (architecture and phase plan).
+Next: Phase 1 (topic docs from audit facts).
 ```
