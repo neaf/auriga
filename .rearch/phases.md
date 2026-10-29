@@ -20,8 +20,7 @@ Build-green commands (every phase):
 ```bash
 cmake --build build-aasdk-mac --target aasdk -j8
 cmake --build build-openauto-mac --target autoapp -j8
-.venv/bin/python -m py_compile stream/*.py stream/lib/*.py scripts/*.sh 2>/dev/null || true
-.venv/bin/python -m py_compile stream/auriga_stream.py stream/server.py stream/lib/*.py
+.venv/bin/python -m py_compile $(find stream scripts -name '*.py')
 for f in scripts/*.sh openauto-config/*.sh; do bash -n "$f"; done
 ```
 
@@ -94,7 +93,8 @@ Touches: `patches/openauto-capture.patch` (add SessionManager: mint id, create
 video/audio/input sinks to the shared id), nested `openauto/` working tree
 (edit + regenerate patch), `stream/lib/session.py` (manifest follower),
 `stream/server.py` (resolve `current`, reset on pointer change, reopen on
-segment-count change).
+segment-count change), `docs/Stream protocol.md` (session/`current`/manifest
+section), `docs/Android Auto head unit.md` (capture file contract).
 
 Deletes: the `size < offset` truncation heuristic in the stream server.
 
@@ -122,8 +122,9 @@ Covers: FR-STR-14, FR-STR-05, FR-STR-09..12, NFR-02, NFR-03, FR-STR-07
 Touches: `stream/server.py` (per-viewer queue, single viewer, content clock,
 keyframe request, manifest geometry in `hello`), `stream/web/app.js` (re-anchor
 on backward jump, queue-aware decode, `{"type":"keyframe"}`, single-socket
-handling), `stream/web/index.html` (canvas sized from `hello`), `stream/lib/clock.py`,
-`stream/lib/h264.py`.
+handling), `stream/web/index.html` (canvas sized from `hello`),
+`stream/lib/clock.py`, `stream/lib/h264.py`, `docs/Stream protocol.md`
+(single-viewer, keyframe request, content clock, `hello` geometry).
 
 Deletes: `max_gop`/`VIDEO_FRAME_US` dead branches, the multi-client broadcast
 under lock.
@@ -150,7 +151,9 @@ Touches: `patches/openauto-capture.patch` (buffered writer + immediate ACK in
 SPS/PPS once per segment; emit width/height/fps into `manifest.json`), new
 `patches/openauto-auriga-identity.patch` (display_name/make/model → `Auriga`),
 `patches/openauto-macos.patch` (one `AURIGA_CAPTURE_DIR` read shared by `App`
-and `ServiceFactory`), `stream/server.py` (use manifest geometry in `hello`).
+and `ServiceFactory`), `stream/server.py` (use manifest geometry in `hello`),
+`docs/Android Auto head unit.md` (ACK-before-write, codec-config separation,
+identity, geometry), `docs/Stream protocol.md` (`hello` geometry source).
 
 Deletes: the two independent `getenv` capture-mode definitions (one stays).
 
@@ -211,6 +214,7 @@ Verify:
 ./scripts/build.sh            # clean, from patches only
 cmake --build build-aasdk-mac --target aasdk -j8
 cmake --build build-openauto-mac --target autoapp -j8
+.venv/bin/python -m py_compile tools/*.py
 ```
 and `git -C openauto apply --check --reverse <patch>` for every patch (absolute
 paths).
