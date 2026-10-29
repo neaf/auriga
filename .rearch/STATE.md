@@ -4,7 +4,7 @@ Project: Android Auto head unit + capture rig (OpenAuto on macOS, AutoLink dongl
 Branch: rearch/2026-10-29
 Base tag: rearch-base (bfd7903)
 Stage: 6 (final cleanup)
-Phase: all 7 code phases done
+Phase: 7 code phases done; extra Phase 8 (final audit fixes) in progress
 
 ## Done
 - Stage 0 setup. `d3f7c7d`
@@ -12,13 +12,10 @@ Phase: all 7 code phases done
 - Stage 2 audits: 7 aspects + seams, all 72 tracked files covered. `33e7d48`
 - Stage 3 requirements: 54 FR (47 kept, 11 dropped), 8 NFR, 8 CON. `5d6c8ce`
 - Stage 4 architecture: 7 phases approved. `a1ad814`
-- Phase 1 topic docs from audit facts. `8fb94d6`
-- Phase 2 test harness + pure stream libs: 43 tests pass. `e834a3e`
-- Phase 3 per-session capture: 62 tests, patch complete, builds green. `d01ec77`
-- Phase 4 single-viewer stream + browser: 92 tests, builds green. `1a345c5`
-- Phase 5 head-unit fixes: 94 tests, 5 patches reproduce the tree. `88b1f50`
-- Phase 6 runtime consolidation: 94 tests, `auriga.sh` start/stop/status. `942db4e`
-- Phase 7 build from patches: 94 tests, 7 patches reproduce both trees. `a044678`
+- Phases 1-7: topic docs, tests, per-session capture, single-viewer stream,
+  head-unit fixes, runtime consolidation, build from patches. `8fb94d6`..
+  `a044678`
+- Stage 6 final audits: 5 module reports in `.rearch/audit/final-*.md`.
 
 ## Decisions
 - 2026-10-29: treat M1-M8 as passing at baseline; user call ("assume everything works").
@@ -39,9 +36,11 @@ Phase: all 7 code phases done
 - 2026-10-29: P1-P7 deviations in `.rearch/deviations.md`.
 - 2026-10-29: manual checks after phases are treated as pass under the baseline
   assumption unless the user asks to run them.
+- 2026-10-29: final audits found code/doc issues; one extra Phase 8 fixes them
+  before cleanup.
 
 ## Next prompt
 ```
 Use the rearchitect skill. Continue from .rearch/STATE.md.
-Next: Stage 6 (final cleanup).
+Next: Stage 6, extra Phase 8 (final audit fixes).
 ```
