@@ -45,8 +45,8 @@ start_autoapp() {
 }
 
 start_stream() {
-  if pgrep -f "[a]uriga_stream.py --video" >/dev/null 2>&1; then
-    echo "stream server already running (pid $(pgrep -f '[a]uriga_stream.py --video' | head -n1))"
+  if pgrep -f "[a]uriga_stream.py" >/dev/null 2>&1; then
+    echo "stream server already running (pid $(pgrep -f '[a]uriga_stream.py' | head -n1))"
     return
   fi
   if [ ! -f "$STREAM_DIR/auriga_stream.py" ]; then
@@ -56,8 +56,7 @@ start_stream() {
   (
     cd "$STREAM_DIR"
     nohup "$PY" auriga_stream.py \
-      --video "$CAPTURE_DIR/video.h264" \
-      --audio "$CAPTURE_DIR/audio-media.wav" \
+      --capture-dir "$CAPTURE_DIR" \
       --fifo /tmp/auriga-in \
       > "$LOG_DIR/stream-mac-$STAMP.log" 2>&1 &
     echo $! > /tmp/auriga-mac-stream.pid
@@ -78,7 +77,7 @@ fi
 echo
 echo "Mac head unit up."
 echo "  autoapp: $(pgrep -f '[b]uild-openauto-mac/bin/autoapp' | head -n1 || echo stopped)"
-echo "  stream:  $(pgrep -f '[a]uriga_stream.py --video' | head -n1 || echo stopped)"
+echo "  stream:  $(pgrep -f '[a]uriga_stream.py' | head -n1 || echo stopped)"
 echo "  capture: $CAPTURE_DIR"
 echo "  logs:    $LOG_DIR"
 echo

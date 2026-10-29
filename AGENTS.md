@@ -39,7 +39,7 @@ only AOA-switches the dongle; the phone should remain in MTP+ADB
 | --- | --- | --- |
 | Browser UI | `http://127.0.0.1:8080` | Live AA mirror + touch input |
 | WebSocket | `ws://127.0.0.1:8081` | H.264/PCM stream + input |
-| Captures | `captures-mac/` | `video.h264`, `audio-media.wav`, `audio-guidance.wav`, `audio-system.wav`, `input.jsonl` |
+| Captures | `captures-mac/current/` | one `session-<id>/` per AA session with `video.h264`, `audio-*.wav`, `input.jsonl`, `manifest.json` |
 | Input FIFO | `/tmp/auriga-in` | `tap X Y`, `down X Y`, `move X Y`, `up X Y`, `quit` |
 | Logs | `logs/openauto-mac-*.log`, `logs/stream-mac-*.log` | Runtime diagnostics |
 
@@ -60,7 +60,7 @@ ioreg -p IOUSB -l -w 0 | grep -E 'o (AutoLink|SAMSUNG_Android)@|"idProduct" = (2
 adb devices -l
 adb -s RFGL329J04J shell svc usb getFunctions   # expect: mtp
 tail -20 "$(ls -t logs/openauto-mac-*.log | head -1)"   # Version Received + pings
-ffmpeg -loglevel info -i captures-mac/video.h264 -f null - 2>&1 | tail -1
+ffmpeg -loglevel info -i captures-mac/current/video.h264 -f null - 2>&1 | tail -1
 ```
 
 Expected USB IDs:
@@ -81,7 +81,7 @@ To inspect the current frame without Brave:
 
 ```bash
 mkdir -p /tmp/auriga-frames
-ffmpeg -loglevel error -i captures-mac/video.h264 \
+ffmpeg -loglevel error -i captures-mac/current/video.h264 \
   -vf "select='eq(n,300)'" -fps_mode passthrough -frames:v 1 \
   -update 1 -q:v 2 /tmp/auriga-frames/frame.jpg
 ```
@@ -97,8 +97,9 @@ If an emulator is attached, always target the phone explicitly:
 - **Audio:** muted until the 🔇 button is clicked; it is 48 kHz/16-bit stereo.
 - **New clients:** the stream server sends the most recent H.264 IDR and the
   following deltas, so a late client can start decoding immediately.
-- **Sessions:** a new AA session truncates the capture files and the server
-  sends a `reset` message. Previous capture contents are lost.
+- **Sessions:** each AA session gets its own `session-<id>/` directory and the
+  `current` symlink repoints to it; the server sends a `reset` on the change.
+  The five newest sessions are kept.
 - **Logs:** the newest `logs/openauto-mac-*.log` is the current `autoapp` log.
 
 ## Integration contract
@@ -113,7 +114,7 @@ The stream is designed to be consumed by another local process:
   - binary: `type:u8 | timestamp_us:u64 BE | payload`.
     - `1` = H.264 keyframe (AVCC), `3` = H.264 delta (AVCC),
     - `2` = PCM s16le, 48 kHz, stereo, 20 ms chunks.
-  - text `reset` when a new AA session truncates the capture.
+  - text `reset` when `current` moves to a new session.
   - client → server text: `{type:"tap"|"down"|"move"|"up", x, y}` in 1280x720
     space; the server writes `tap X Y` etc. to `/tmp/auriga-in`.
 - The server binds **localhost only** and has no authentication. WebCodecs

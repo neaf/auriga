@@ -42,26 +42,17 @@ Use absolute patch paths: a relative path is resolved inside the nested clone an
 fails (`git -C openauto apply --check --reverse patches/...` reports
 `can't open patch`).
 
-### Patches are not a complete source of truth
+### aasdk edits live only in the nested tree
 
-Symptom: applying the four OpenAuto patches to a pristine `4cc739b8` tree
-compiles `AurigaInputDevice.cpp` with an incomplete
-`IInputDeviceEventHandler` type; `git apply --check --reverse` of the capture
-patch fails on that one file.
-Cause: `patches/openauto-capture.patch` omits
-`#include <f1x/openauto/autoapp/Projection/IInputDeviceEventHandler.hpp>`; the
-live tree has it at
-`openauto/src/autoapp/Projection/AurigaInputDevice.cpp:18`, and the sink calls
-`eventHandler_->onTouchEvent(...)`, which needs the complete type.
-Workaround: add the include after applying the patch, or build from the existing
-`openauto/` tree.
-Location: `patches/openauto-capture.patch` (new-file block for
-`AurigaInputDevice.cpp`); the reverse check is the detector.
-
-Two aasdk edits live only in the nested tree, with no patch file:
-`AASDK_MINOR = 7` in `aasdk-upstream/include/aasdk/Version.hpp:22-23`, and the
-Darwin absl include block in `aasdk-upstream/protobuf/CMakeLists.txt`. A rebuild
-from patches alone leaves aasdk at protocol 1.6. See `docs/Build.md`.
+Symptom: a rebuild from `patches/` alone leaves aasdk at AA protocol 1.6 and
+cannot compile the generated protobuf on Darwin.
+Cause: two aasdk edits have no patch file: `AASDK_MINOR = 7` in
+`aasdk-upstream/include/aasdk/Version.hpp:22-23`, and the Darwin absl include
+block in `aasdk-upstream/protobuf/CMakeLists.txt`. The OpenAuto side is fully
+described by the four patches above.
+Workaround: apply the two edits by hand after the patch list, or build from the
+existing nested trees. See `docs/Build.md`.
+Location: `aasdk-upstream/Version.hpp`, `aasdk-upstream/protobuf/CMakeLists.txt`.
 
 ## USB and the AOA switch
 
@@ -105,36 +96,79 @@ behaviour.
 
 | Effect | Condition | Location |
 | --- | --- | --- |
-| `video.h264`, `audio-{media,guidance,system}.wav`, `input.jsonl` in the capture dir | capture dir non-empty | `openauto/src/autoapp/Service/ServiceFactory.cpp:60-101,166-168,228-231,247-249` |
-| create the capture dir (`create_directories`) | capture dir non-empty | `ServiceFactory.cpp:68-78` |
+| one `session-<id>/` directory per AA entity holding `video.h264`, `audio-{media,guidance,system}.wav`, `input.jsonl`, `manifest.json`, and a `current` pointer | capture dir non-empty | `openauto/src/autoapp/Service/ServiceFactory.cpp:116-118,173-175,235-236`; `openauto/src/autoapp/Projection/AurigaSession.cpp` |
+| create the capture dir (`create_directories`) | capture dir non-empty | `ServiceFactory.cpp:65-82` |
 | no all-device AOA enumerator | `AURIGA_CAPTURE_DIR` set | `openauto/src/autoapp/App.cpp:59` |
 | acceptor bound to port 0, no `async_accept` | `AURIGA_CAPTURE_DIR` set | `App.cpp:42-43,185-188` |
 
 The variable has two readers with different empty-string semantics:
 `App.cpp:31-33` treats any non-null value (including `""`) as capture mode, while
-`ServiceFactory.cpp:67` requires non-null and non-empty, and caches the result
+`ServiceFactory.cpp:67-68` requires non-null and non-empty, and caches the result
 in a function-local static. `AURIGA_CAPTURE_DIR=""` therefore gives a headless
 process with GUI backends and no capture files.
 
 ## Capture file contract
 
-| File | Format | Written | Truncated at |
-| --- | --- | --- | --- |
-| `video.h264` | Annex-B H.264, 4-byte start codes, one AA access unit per `write()` | written and flushed per access unit (`openauto/src/autoapp/Projection/AurigaVideoOutput.cpp:67-68`) | video channel open (`AurigaVideoOutput.cpp:39`) |
-| `audio-media.wav` | PCM WAV, 48 kHz, 2 ch, 16-bit | raw AA PCM after a 44-byte header (`AurigaAudioOutput.cpp:90-106`) | media audio channel open (`AurigaAudioOutput.cpp:70`) |
-| `audio-guidance.wav` | PCM WAV, 16 kHz, 1 ch, 16-bit | same writer | guidance audio channel open |
-| `audio-system.wav` | PCM WAV, 16 kHz, 1 ch, 16-bit | same writer | system audio channel open |
-| `input.jsonl` | JSON lines `{"ts":epoch_us,"cmd","x","y"}` | flushed per line (`AurigaInputDevice.cpp:220-232`) | input device start, i.e. the phone's `KeyBindingRequest` |
+One AA entity is one capture session: a directory plus a `current` pointer.
 
-The three audio sinks open with `std::ios::trunc` on fixed names. All four files
-are recreated for every AA entity: a reconnect discards the previous session's
-capture, and the four truncation instants are not synchronized (video and audio
-at channel open, JSONL at `KeyBindingRequest`).
+```
+<capture-dir>/
+  current -> session-<id>
+  session-<id>/
+    video.h264
+    audio-media.wav
+    audio-guidance.wav
+    audio-system.wav
+    input.jsonl
+    manifest.json
+```
+
+`ServiceFactory::create()` builds one `AurigaSessionManager` per AA entity and
+hands it to every sink, so the four files of one entity are created in the same
+directory no matter how far apart the channels open
+(`ServiceFactory.cpp:116-118,173-175,192,200,226,235-236`;
+`AurigaSession.cpp:75-110`). Session ids are local time `%Y%m%d-%H%M%S`, with
+`-2`, `-3`, … appended when that id already exists
+(`AurigaSession.cpp:42-71`).
+
+Publication order at session start: create `session-<id>/`, write
+`manifest.json` (`manifest.json.tmp` + rename), then replace `current`
+(`current.tmp.<pid>` symlink + rename). Both renames are atomic, so the stream
+server never sees a half-written pointer or manifest
+(`AurigaSession.cpp:146-196`).
+
+`manifest.json` names the session and carries one segment count per stream:
+
+```json
+{"session":"20261029-090405","audio-guidance":0,"audio-media":0,"audio-system":0,"video":0}
+```
+
+| File | Format | Written | Rotation |
+| --- | --- | --- | --- |
+| `video.h264` | Annex-B H.264, 4-byte start codes, one AA access unit per `write()` | written and flushed per access unit (`openauto/src/autoapp/Projection/AurigaVideoOutput.cpp:63-82`) | truncated and restarted at 0 before 4 GiB; the `video` count advances (`AurigaVideoOutput.cpp:78-80,98-112`) |
+| `audio-media.wav` | PCM WAV, 48 kHz, 2 ch, 16-bit | raw AA PCM after a 44-byte header (`AurigaAudioOutput.cpp:91-117`) | restarted at 44 bytes with a fresh header before 4 GiB; the `audio-media` count advances (`AurigaAudioOutput.cpp:105-108,191-208`) |
+| `audio-guidance.wav` | PCM WAV, 16 kHz, 1 ch, 16-bit | same writer | same as `audio-media`, count `audio-guidance` |
+| `audio-system.wav` | PCM WAV, 16 kHz, 1 ch, 16-bit | same writer | same as `audio-media`, count `audio-system` |
+| `input.jsonl` | JSON lines `{"ts":epoch_us,"cmd","x","y"}` | flushed per line (`AurigaInputDevice.cpp:216-231`) | none |
+
+Each sink still opens its file with `std::ios::trunc`, but into a directory that
+was just created, so a new session never touches the previous files: a
+reconnect creates a second `session-*` directory and preserves the first.
+
+Rotation uses one limit, `SEGMENT_LIMIT = 4 GiB - 16 MiB`, applied to video
+bytes and WAV data bytes so the 32-bit RIFF sizes cannot wrap
+(`AurigaSession.hpp:30-32`; `AurigaVideoOutput.cpp:78`,
+`AurigaAudioOutput.cpp:105`). A rotated file keeps its name and restarts at
+offset 0; the manifest count is the only rollover signal, and the old segment's
+bytes are discarded.
+
+Retention is bounded: a new session removes all but the newest five
+`session-*` directories, always keeping the current one
+(`AurigaSession.hpp:33-34`; `AurigaSession.cpp:198-244`).
 
 WAV header: 44 bytes, RIFF/WAVE/fmt/data, 32-bit RIFF and data sizes, rewritten
-after every accumulated second of audio (`AurigaAudioOutput.cpp:103-106,145-166`).
-Between rewrites the header lags the file by up to 1 s of audio. The 32-bit
-sizes wrap after ~4 GiB of media audio (about 6.2 h at 192,000 B/s).
+after every accumulated second of audio (`AurigaAudioOutput.cpp:112-117,155-176`).
+Between rewrites the header lags the file by up to 1 s of audio.
 
 `AurigaAudioOutput::start()` and `suspend()` are empty, and `autoapp` installs
 no SIGTERM handler: a `pkill` stop leaves the WAV header at the last 1 s
@@ -202,8 +236,9 @@ returns EOF and the reader exits; the run scripts park `sleep 86400` on it.
 
 Advertised services, built per AA entity: video sink, media/guidance/system
 audio sinks, microphone source, sensor source, input source, and Bluetooth when
-`WirelessProjectionEnabled` is true. Android Auto over Wi-Fi (WPP) and telephony
-audio are not advertised (`ServiceFactory.cpp:108-128,199-213`).
+`WirelessProjectionEnabled` is true. The same call mints one capture session and
+publishes `current` (`ServiceFactory.cpp:110-120`). Android Auto over Wi-Fi (WPP)
+and telephony audio are not advertised (`ServiceFactory.cpp:108-128,199-213`).
 
 Identity and ping values in the service-discovery response
 (`openauto/src/autoapp/Service/AndroidAutoEntity.cpp:181-202`):
@@ -264,6 +299,11 @@ media ACK after `write()` returns
 latency is therefore inside the phone-visible flow-control path: a slow write
 delays the ACK and the phone's next frame. Removing the I/O from that path is an
 open requirement (NFR-01), not current behaviour.
+
+`AurigaSessionManager` mints the session and publishes `current` on the
+entity-creation path. `noteRotation` rewrites `manifest.json` from the sink's own
+`write()` call, at most once per 4 GiB per stream (`AurigaSession.cpp:128-142`,
+`AurigaVideoOutput.cpp:78-80`, `AurigaAudioOutput.cpp:105-108`).
 
 ## AA stream format
 

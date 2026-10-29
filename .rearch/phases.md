@@ -90,14 +90,16 @@ Covers: FR-STR-13, FR-STR-07 (reset via `current`), NFR-05 (retention), NFR-08
 
 Touches: `patches/openauto-capture.patch` (add SessionManager: mint id, create
 `session-<id>/`, atomic `current`, write `manifest.json`, retention prune; wire
-video/audio/input sinks to the shared id), nested `openauto/` working tree
-(edit + regenerate patch), `stream/lib/session.py` (manifest follower),
-`stream/server.py` (resolve `current`, reset on pointer change, reopen on
-segment-count change), `stream/auriga_stream.py` (split first: move `Streamer`
-and `serve_http` to `stream/server.py`; this file stays the thin CLI),
-`tests/test_session.py` (follower), `docs/Stream protocol.md`
+video/audio/input sinks to the shared id; segment rotation; regenerate), nested
+`openauto/` working tree, `stream/lib/session.py` (manifest follower),
+`stream/server.py` (new; `Streamer` + `serve_http`, resolve `current`, reset on
+pointer change, reopen on segment-count change), `stream/auriga_stream.py`
+(thin CLI), `tests/test_session.py` (follower),
+`scripts/mac-headunit-start.sh` + `scripts/mac-headunit-stop.sh`
+(`--capture-dir`, pgrep/pkill), `docs/Stream protocol.md`
 (session/`current`/manifest section), `docs/Android Auto head unit.md` (capture
-file contract).
+file contract), `docs/Build.md` (patch-completeness quirk), `AGENTS.md` and
+`stream/README.md` (capture paths, session reset).
 
 Deletes: the `size < offset` truncation heuristic in the stream server.
 
@@ -207,9 +209,10 @@ Covers: FR-BLD-01..04, FR-BLD-06, FR-BLD-07, FR-BLD-02.
 
 Touches: new `scripts/build.sh` (clone upstreams to a temp dir, apply all
 patches in order, configure, build), new `patches/aasdk-version-absl.patch`
-(`Version.hpp` 6→7 + protobuf absl include), `patches/openauto-capture.patch`
-(fix the missing `IInputDeviceEventHandler.hpp` include), `docs/Build.md`
-(patch order), `tools/` move for `aoa_probe.py`/`aoa_read.py`.
+(`Version.hpp` 6→7 + protobuf absl include), `docs/Build.md` (patch order),
+`tools/` move for `aoa_probe.py`/`aoa_read.py`. No `openauto-capture.patch`
+change: P3's regenerated patch already includes the
+`IInputDeviceEventHandler.hpp` include.
 
 Deletes: none. Dropped-file cleanup happens in Stage 6 per `docs-plan.md`.
 

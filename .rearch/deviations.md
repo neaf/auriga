@@ -62,3 +62,40 @@
   into `stream/server.py` and leaves `auriga_stream.py` as the CLI, plus the
   `tests/test_session.py` follower coverage. P4 gains `tests/test_clock.py` and
   `tests/test_h264.py` for the code it changes.
+
+- **P3: touch-list additions.** Moving `Streamer`/`serve_http` into
+  `stream/server.py` changed the CLI from `--video`/`--audio` to
+  `--capture-dir`, and the server now follows `<capture-dir>/current`. Files that
+  spell out the old layout had to move with it:
+  `scripts/mac-headunit-start.sh` and `scripts/mac-headunit-stop.sh` (invocation,
+  `pgrep`/`pkill` patterns), `AGENTS.md` (capture table, session bullet, `reset`
+  bullet, ffmpeg paths), `stream/README.md` (manual command, `reset` lines) and
+  `docs/Build.md` (the "`patches/` is incomplete" quirk: the OpenAuto side is now
+  complete). The full `AGENTS.md`/`README.md` rewrites stay with P6/Stage 6.
+
+- **P3: regenerated capture patch is complete for OpenAuto.** Regenerating
+  `patches/openauto-capture.patch` from the tree also picks up the
+  `IInputDeviceEventHandler.hpp` include in `AurigaInputDevice.cpp`, which P7
+  listed as a fix. P7 keeps only the aasdk patch work. Verified: applying
+  `openauto-capture` -> `openauto-macos` -> `openauto-auriga-usb-filter` ->
+  `openauto-auriga-gps-guard` to a pristine `4cc739b8` clone reproduces
+  `openauto/include` and `openauto/src` byte for byte.
+
+- **P3: rotation is a same-name restart.** "Rotate before 4 GiB" follows the
+  architecture's error-handling section: the sink truncates its file, restarts
+  at offset 0 and bumps that stream's `manifest.json` count. There are no
+  numbered segment files; the older segment is discarded, so a session directory
+  stays under 4 GiB per stream (`SEGMENT_LIMIT` = 4 GiB - 16 MiB).
+  `KEEP_SESSIONS` = 5 prunes older session directories at session start.
+  `manifest.json` carries `session` plus the four segment counts only; geometry
+  stays a P5 item, and `parse_manifest` defaults to 1280x720/30 until then.
+
+- **P3: `stream/server.py` imports both ways.** `auriga_stream.py` runs as a
+  script (`from lib...`) and later phases may import `stream.server` from
+  `tests/` (`from .lib...`), so the module branches on `__package__` instead of
+  assuming one sys.path layout.
+
+- **P3: `stream/auriga_stream.py` was committed at its pre-P2 state.** The P2
+  refactor of that file (imports from `stream/lib/h264.py`, `AUDIO_CHUNK`
+  comment) was in the working tree but not in the P2 commit. P3 rewrites the file
+  as the CLI, so the P2 intent lands here.

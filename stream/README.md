@@ -46,14 +46,11 @@ Or manually, on the host running OpenAuto:
 
 ```bash
 cd stream
-python3 auriga_stream.py \
-  --video /path/to/video.h264 \
-  --audio /path/to/audio-media.wav \
-  --fifo /tmp/auriga-in
+python3 auriga_stream.py --capture-dir /path/to/captures-mac --fifo /tmp/auriga-in
 ```
 
-On the Mac head unit the paths are `captures-mac/video.h264` and
-`captures-mac/audio-media.wav`. It listens on `127.0.0.1:8080` (HTTP) and
+The server follows `<capture-dir>/current`, so it needs the capture directory,
+not the two file paths. It listens on `127.0.0.1:8080` (HTTP) and
 `127.0.0.1:8081` (WebSocket) only. Open `http://localhost:8080` in Brave (or
 Chrome). `localhost` is a secure context, which WebCodecs requires.
 
@@ -76,7 +73,7 @@ ssh -N -L 8080:127.0.0.1:8080 -L 8081:127.0.0.1:8081 pi@auriga-pi.local
 - Server → client binary: `type:u8 | timestamp_us:u64 BE | payload`
   - type 1 = H.264 key frame (AVCC), type 3 = H.264 delta (AVCC),
   - type 2 = PCM s16le 48 kHz stereo (20 ms chunks).
-- Server text `reset` when the capture file is truncated by a new AA session.
+- Server text `reset` when `current` moves to a new session.
 - Client → server text: `{type:"tap"|"down"|"move"|"up", x, y}` in 1280x720
   space; the server writes `tap X Y` etc. to `/tmp/auriga-in`.
 
@@ -88,8 +85,9 @@ ssh -N -L 8080:127.0.0.1:8080 -L 8081:127.0.0.1:8081 pi@auriga-pi.local
   deltas), so WebCodecs can start decoding. If the AA stream has no recent IDR,
   the server starts at file offset 0 and catches up; memory use grows with the
   cached GOP, so restart the streamer per session for long runs.
-- A new AA session truncates `video.h264`/`audio-media.wav`; the server detects
-  it, clears the GOP and sends `reset`, but the previous capture is lost.
+- A new AA session creates a new `session-<id>` directory; the server detects
+  the `current` change, clears the GOP and sends `reset`. The previous session
+  stays on disk (the five newest are kept).
 - The H.264 parser assumes one slice per frame (the current AA stream meets
   this).
 - No H.264 transcode; the Pi only copies/frames. WebCodecs does the decode on

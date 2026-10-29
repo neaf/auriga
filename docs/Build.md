@@ -171,16 +171,17 @@ Symptom: a new `.cpp` under `openauto/src` is not compiled.
 Cause: OpenAuto collects sources with `file(GLOB_RECURSE)` at configure time.
 Workaround: re-run the configure step after adding or removing files.
 
-### `patches/` is incomplete
+### `patches/` does not cover aasdk
 
-Symptom: a pristine clone + the documented patches does not compile.
-Cause: `patches/openauto-capture.patch` omits the
-`IInputDeviceEventHandler.hpp` include that `AurigaInputDevice.cpp` needs, and
-the two aasdk edits above are only in the nested tree.
-Workaround: add the include and the two aasdk edits after applying patches, or
-build from the existing nested trees.
-Location: `patches/openauto-capture.patch`; reverse-check of the capture patch
-fails on `AurigaInputDevice.cpp`.
+Symptom: a pristine clone + the documented patches leaves aasdk at AA protocol
+1.6, and the Darwin build of `aap_protobuf` fails on `absl/...` headers.
+Cause: the two aasdk edits above have no patch file. The four OpenAuto patches
+fully describe `openauto/`: applying them to a pristine `4cc739b8` tree
+reproduces the nested tree byte for byte.
+Workaround: apply the two aasdk edits after the patch list, or build from the
+existing nested trees.
+Location: `aasdk-upstream/include/aasdk/Version.hpp`,
+`aasdk-upstream/protobuf/CMakeLists.txt`.
 
 ## Artifacts
 

@@ -64,24 +64,26 @@ index 0000000..ae525da
 +}
 diff --git a/include/f1x/openauto/autoapp/Projection/AurigaAudioOutput.hpp b/include/f1x/openauto/autoapp/Projection/AurigaAudioOutput.hpp
 new file mode 100644
-index 0000000..320ef65
+index 0000000..5baa700
 --- /dev/null
 +++ b/include/f1x/openauto/autoapp/Projection/AurigaAudioOutput.hpp
-@@ -0,0 +1,60 @@
+@@ -0,0 +1,66 @@
 +/*
 +*  This file is part of openauto project.
 +*
-+*  Auriga capture output: writes each AA audio channel to its own WAV file.
-+*  Selected only when AURIGA_CAPTURE_DIR is set.
++*  Auriga capture output: writes each AA audio channel to its own WAV file in
++*  the current session directory. Selected only when AURIGA_CAPTURE_DIR is set.
 +*/
 +
 +#pragma once
 +
 +#include <cstdint>
 +#include <fstream>
++#include <memory>
 +#include <mutex>
 +#include <string>
 +
++#include <f1x/openauto/autoapp/Projection/AurigaSession.hpp>
 +#include <f1x/openauto/autoapp/Projection/IAudioOutput.hpp>
 +
 +namespace f1x
@@ -96,7 +98,8 @@ index 0000000..320ef65
 +class AurigaAudioOutput : public IAudioOutput
 +{
 +public:
-+    AurigaAudioOutput(std::string path, uint32_t channelCount, uint32_t sampleSize, uint32_t sampleRate);
++    AurigaAudioOutput(std::shared_ptr<AurigaSessionManager> session, std::string name,
++                      uint32_t channelCount, uint32_t sampleSize, uint32_t sampleRate);
 +    ~AurigaAudioOutput() override;
 +
 +    bool open() override;
@@ -113,7 +116,10 @@ index 0000000..320ef65
 +private:
 +    void writeHeader();
 +    void updateHeader();
++    void rotate();
 +
++    std::shared_ptr<AurigaSessionManager> session_;
++    std::string stream_;
 +    std::string path_;
 +    std::ofstream file_;
 +    std::mutex mutex_;
@@ -196,12 +202,79 @@ index 0000000..a67fc6c
 +}
 +}
 +}
+diff --git a/include/f1x/openauto/autoapp/Projection/AurigaSession.hpp b/include/f1x/openauto/autoapp/Projection/AurigaSession.hpp
+new file mode 100644
+index 0000000..0756899
+--- /dev/null
++++ b/include/f1x/openauto/autoapp/Projection/AurigaSession.hpp
+@@ -0,0 +1,61 @@
++/*
++*  This file is part of openauto project.
++*
++*  Auriga capture session: one session per AA entity. Mints the id, creates
++*  <capture-dir>/session-<id>/, publishes <capture-dir>/current and owns
++*  manifest.json (per-stream segment counts) plus the retention cap.
++*/
++
++#pragma once
++
++#include <cstddef>
++#include <cstdint>
++#include <map>
++#include <memory>
++#include <mutex>
++#include <string>
++
++namespace f1x
++{
++namespace openauto
++{
++namespace autoapp
++{
++namespace projection
++{
++
++class AurigaSessionManager
++{
++public:
++    // A stream file is truncated and restarted before it can reach 4 GiB; the
++    // WAV header carries 32-bit RIFF sizes and must never wrap.
++    static constexpr uint64_t SEGMENT_LIMIT = (4ull << 30) - (16ull << 20);
++    // Most recent sessions kept on disk; the current one is never pruned.
++    static constexpr std::size_t KEEP_SESSIONS = 5;
++
++    AurigaSessionManager(std::string captureDir, std::size_t keepSessions = KEEP_SESSIONS);
++
++    const std::string& sessionId() const;
++    const std::string& directory() const;
++    std::string path(const std::string& fileName) const;
++    // Called by a sink after it restarted its file: bumps that stream's segment
++    // count and republishes manifest.json atomically.
++    void noteRotation(const std::string& stream);
++
++private:
++    void writeManifest();
++    void publishCurrent();
++    void prune();
++
++    std::string captureDir_;
++    std::string sessionId_;
++    std::string directory_;
++    std::size_t keepSessions_;
++    std::map<std::string, uint64_t> segments_;
++    std::mutex mutex_;
++};
++
++}
++}
++}
++}
 diff --git a/include/f1x/openauto/autoapp/Projection/AurigaVideoOutput.hpp b/include/f1x/openauto/autoapp/Projection/AurigaVideoOutput.hpp
 new file mode 100644
-index 0000000..93eb8f6
+index 0000000..a0ce176
 --- /dev/null
 +++ b/include/f1x/openauto/autoapp/Projection/AurigaVideoOutput.hpp
-@@ -0,0 +1,47 @@
+@@ -0,0 +1,55 @@
 +/*
 +*  This file is part of openauto project.
 +*
@@ -212,10 +285,13 @@ index 0000000..93eb8f6
 +
 +#pragma once
 +
++#include <cstdint>
 +#include <fstream>
++#include <memory>
 +#include <mutex>
 +#include <string>
 +
++#include <f1x/openauto/autoapp/Projection/AurigaSession.hpp>
 +#include <f1x/openauto/autoapp/Projection/VideoOutput.hpp>
 +
 +namespace f1x
@@ -230,7 +306,8 @@ index 0000000..93eb8f6
 +class AurigaVideoOutput : public VideoOutput
 +{
 +public:
-+    AurigaVideoOutput(configuration::IConfiguration::Pointer configuration, std::string path);
++    AurigaVideoOutput(configuration::IConfiguration::Pointer configuration,
++                      std::shared_ptr<AurigaSessionManager> session);
 +    ~AurigaVideoOutput() override;
 +
 +    bool open() override;
@@ -240,15 +317,52 @@ index 0000000..93eb8f6
 +    void stop() override;
 +
 +private:
++    void rotate();
++
++    std::shared_ptr<AurigaSessionManager> session_;
 +    std::string path_;
 +    std::ofstream file_;
 +    std::mutex mutex_;
++    uint64_t segmentBytes_;
 +};
 +
 +}
 +}
 +}
 +}
+diff --git a/include/f1x/openauto/autoapp/Service/ServiceFactory.hpp b/include/f1x/openauto/autoapp/Service/ServiceFactory.hpp
+index 7cf8500..85ad0c6 100644
+--- a/include/f1x/openauto/autoapp/Service/ServiceFactory.hpp
++++ b/include/f1x/openauto/autoapp/Service/ServiceFactory.hpp
+@@ -18,12 +18,18 @@
+ 
+ #pragma once
+ 
++#include <memory>
++
+ #include <f1x/openauto/autoapp/Service/IServiceFactory.hpp>
+ #include <f1x/openauto/autoapp/Configuration/IConfiguration.hpp>
+ 
+ namespace f1x {
+   namespace openauto {
+     namespace autoapp {
++      namespace projection {
++        class AurigaSessionManager;
++      }
++
+       namespace service {
+ 
+         class ServiceFactory : public IServiceFactory {
+@@ -50,6 +56,9 @@ namespace f1x {
+ 
+           boost::asio::io_service &ioService_;
+           configuration::IConfiguration::Pointer configuration_;
++          // One session per AA entity, shared by the video/audio/input sinks so
++          // they write into the same directory and manifest.
++          std::shared_ptr<projection::AurigaSessionManager> captureSession_;
+         };
+ 
+       }
 diff --git a/src/autoapp/Projection/AurigaAudioInput.cpp b/src/autoapp/Projection/AurigaAudioInput.cpp
 new file mode 100644
 index 0000000..4b48c23
@@ -389,15 +503,17 @@ index 0000000..4b48c23
 +}
 diff --git a/src/autoapp/Projection/AurigaAudioOutput.cpp b/src/autoapp/Projection/AurigaAudioOutput.cpp
 new file mode 100644
-index 0000000..2d4c40c
+index 0000000..3b4f0f3
 --- /dev/null
 +++ b/src/autoapp/Projection/AurigaAudioOutput.cpp
-@@ -0,0 +1,182 @@
+@@ -0,0 +1,213 @@
 +/*
 +*  This file is part of openauto project.
 +*
-+*  Auriga capture output: PCM WAV writer.
++*  Auriga capture output: PCM WAV writer with a segment cap.
 +*/
++
++#include <utility>
 +
 +#include <f1x/openauto/Common/Log.hpp>
 +#include <f1x/openauto/autoapp/Projection/AurigaAudioOutput.hpp>
@@ -437,9 +553,11 @@ index 0000000..2d4c40c
 +
 +}
 +
-+AurigaAudioOutput::AurigaAudioOutput(std::string path, uint32_t channelCount, uint32_t sampleSize,
-+                                     uint32_t sampleRate)
-+    : path_(std::move(path))
++AurigaAudioOutput::AurigaAudioOutput(std::shared_ptr<AurigaSessionManager> session, std::string name,
++                                     uint32_t channelCount, uint32_t sampleSize, uint32_t sampleRate)
++    : session_(std::move(session))
++    , stream_("audio-" + name)
++    , path_(session_->path("audio-" + name + ".wav"))
 +    , channelCount_(channelCount)
 +    , sampleSize_(sampleSize)
 +    , sampleRate_(sampleRate)
@@ -475,7 +593,7 @@ index 0000000..2d4c40c
 +
 +    OPENAUTO_LOG(info) << "[AurigaAudioOutput] writing " << path_ << " ("
 +                       << sampleRate_ << " Hz, " << channelCount_ << " ch, "
-+                       << sampleSize_ << " bit)";
++                       << sampleSize_ << " bit, session " << session_->sessionId() << ")";
 +    return true;
 +}
 +
@@ -492,6 +610,12 @@ index 0000000..2d4c40c
 +    file_.write(reinterpret_cast<const char*>(buffer.cdata),
 +                static_cast<std::streamsize>(buffer.size));
 +    dataBytes_ += buffer.size;
++
++    if (dataBytes_ >= AurigaSessionManager::SEGMENT_LIMIT)
++    {
++        this->rotate();
++        return;
++    }
 +
 +    const uint64_t bytesPerSecond =
 +        static_cast<uint64_t>(sampleRate_) * channelCount_ * (sampleSize_ / 8);
@@ -571,16 +695,37 @@ index 0000000..2d4c40c
 +    lastHeaderUpdate_ = dataBytes_;
 +}
 +
++// Segment rollover: the WAV restarts at 44 bytes with a fresh header and the
++// manifest count advances, which is the stream server's signal to reopen it.
++void AurigaAudioOutput::rotate()
++{
++    file_.flush();
++    file_.close();
++    file_.open(path_, std::ios::binary | std::ios::trunc);
++
++    dataBytes_ = 0;
++    lastHeaderUpdate_ = 0;
++
++    if (!file_.is_open())
++    {
++        OPENAUTO_LOG(error) << "[AurigaAudioOutput] cannot reopen " << path_;
++        return;
++    }
++
++    this->writeHeader();
++    session_->noteRotation(stream_);
++}
++
 +}
 +}
 +}
 +}
 diff --git a/src/autoapp/Projection/AurigaInputDevice.cpp b/src/autoapp/Projection/AurigaInputDevice.cpp
 new file mode 100644
-index 0000000..d1d6b3a
+index 0000000..ca9fcef
 --- /dev/null
 +++ b/src/autoapp/Projection/AurigaInputDevice.cpp
-@@ -0,0 +1,235 @@
+@@ -0,0 +1,236 @@
 +/*
 +*  This file is part of openauto project.
 +*
@@ -598,6 +743,7 @@ index 0000000..d1d6b3a
 +
 +#include <f1x/openauto/Common/Log.hpp>
 +#include <f1x/openauto/autoapp/Projection/AurigaInputDevice.hpp>
++#include <f1x/openauto/autoapp/Projection/IInputDeviceEventHandler.hpp>
 +
 +namespace f1x
 +{
@@ -816,17 +962,274 @@ index 0000000..d1d6b3a
 +}
 +}
 +}
-diff --git a/src/autoapp/Projection/AurigaVideoOutput.cpp b/src/autoapp/Projection/AurigaVideoOutput.cpp
+diff --git a/src/autoapp/Projection/AurigaSession.cpp b/src/autoapp/Projection/AurigaSession.cpp
 new file mode 100644
-index 0000000..aed5f9e
+index 0000000..6c6aeaa
 --- /dev/null
-+++ b/src/autoapp/Projection/AurigaVideoOutput.cpp
-@@ -0,0 +1,85 @@
++++ b/src/autoapp/Projection/AurigaSession.cpp
+@@ -0,0 +1,248 @@
 +/*
 +*  This file is part of openauto project.
 +*
-+*  Auriga capture output: appends H.264 Annex-B access units to a file.
++*  Auriga capture session: id minting, `current` pointer, manifest and
++*  retention. The on-disk contract is documented in
++*  `docs/Android Auto head unit.md`; the stream server follows it in
++*  `stream/lib/session.py`.
 +*/
++
++#include <algorithm>
++#include <cstring>
++#include <ctime>
++#include <filesystem>
++#include <fstream>
++#include <sstream>
++#include <string>
++#include <system_error>
++#include <vector>
++
++#include <unistd.h>
++
++#include <f1x/openauto/Common/Log.hpp>
++#include <f1x/openauto/autoapp/Projection/AurigaSession.hpp>
++
++namespace f1x
++{
++namespace openauto
++{
++namespace autoapp
++{
++namespace projection
++{
++
++namespace
++{
++
++constexpr const char* kSessionPrefix = "session-";
++constexpr const char* kCurrentName = "current";
++constexpr const char* kManifestName = "manifest.json";
++constexpr const char* kStreams[] = {"video", "audio-media", "audio-guidance", "audio-system"};
++
++std::string timestampId()
++{
++    const std::time_t now = std::time(nullptr);
++    std::tm local{};
++    localtime_r(&now, &local);
++
++    char buffer[32] = {0};
++    std::strftime(buffer, sizeof(buffer), "%Y%m%d-%H%M%S", &local);
++    return std::string(buffer);
++}
++
++// Session ids sort lexicographically by time; a second entity inside the same
++// second gets a numeric suffix instead of sharing a directory.
++std::string mintSessionId(const std::string& captureDir)
++{
++    const std::string base = timestampId();
++    std::string candidate = base;
++
++    for (int suffix = 2; suffix < 100; ++suffix)
++    {
++        std::error_code error;
++        if (!std::filesystem::exists(captureDir + "/" + kSessionPrefix + candidate, error))
++        {
++            break;
++        }
++        candidate = base + "-" + std::to_string(suffix);
++    }
++
++    return candidate;
++}
++
++}
++
++AurigaSessionManager::AurigaSessionManager(std::string captureDir, std::size_t keepSessions)
++    : captureDir_(std::move(captureDir))
++    , keepSessions_(keepSessions)
++{
++    std::error_code error;
++    std::filesystem::create_directories(captureDir_, error);
++    if (error)
++    {
++        OPENAUTO_LOG(error) << "[AurigaSession] cannot create " << captureDir_ << ": "
++                            << error.message();
++    }
++
++    sessionId_ = mintSessionId(captureDir_);
++    directory_ = captureDir_ + "/" + kSessionPrefix + sessionId_;
++
++    std::filesystem::create_directories(directory_, error);
++    if (error)
++    {
++        OPENAUTO_LOG(error) << "[AurigaSession] cannot create " << directory_ << ": "
++                            << error.message();
++    }
++
++    for (const char* stream : kStreams)
++    {
++        segments_[stream] = 0;
++    }
++
++    {
++        std::lock_guard<std::mutex> lock(mutex_);
++        this->writeManifest();
++    }
++
++    this->publishCurrent();
++    this->prune();
++
++    OPENAUTO_LOG(info) << "[AurigaSession] session " << sessionId_ << " in " << directory_;
++}
++
++const std::string& AurigaSessionManager::sessionId() const
++{
++    return sessionId_;
++}
++
++const std::string& AurigaSessionManager::directory() const
++{
++    return directory_;
++}
++
++std::string AurigaSessionManager::path(const std::string& fileName) const
++{
++    return directory_ + "/" + fileName;
++}
++
++void AurigaSessionManager::noteRotation(const std::string& stream)
++{
++    std::lock_guard<std::mutex> lock(mutex_);
++
++    auto entry = segments_.find(stream);
++    if (entry == segments_.end())
++    {
++        OPENAUTO_LOG(warning) << "[AurigaSession] unknown stream " << stream;
++        return;
++    }
++
++    ++entry->second;
++    this->writeManifest();
++    OPENAUTO_LOG(info) << "[AurigaSession] " << stream << " segment " << entry->second;
++}
++
++// Caller holds mutex_. The manifest is replaced by rename so the stream server
++// never reads a half-written document.
++void AurigaSessionManager::writeManifest()
++{
++    std::ostringstream json;
++    json << "{\"session\":\"" << sessionId_ << "\"";
++    for (const auto& entry : segments_)
++    {
++        json << ",\"" << entry.first << "\":" << entry.second;
++    }
++    json << "}\n";
++
++    const std::string path = directory_ + "/" + kManifestName;
++    const std::string temp = path + ".tmp";
++
++    {
++        std::ofstream file(temp, std::ios::out | std::ios::trunc | std::ios::binary);
++        if (!file.is_open())
++        {
++            OPENAUTO_LOG(error) << "[AurigaSession] cannot write " << temp;
++            return;
++        }
++        file << json.str();
++        file.flush();
++    }
++
++    if (std::rename(temp.c_str(), path.c_str()) != 0)
++    {
++        OPENAUTO_LOG(error) << "[AurigaSession] cannot publish " << path;
++    }
++}
++
++// Relative symlink replaced by rename: a reader either sees the old or the new
++// session, never a missing pointer.
++void AurigaSessionManager::publishCurrent()
++{
++    const std::string link = captureDir_ + "/" + kCurrentName;
++    const std::string temp = link + ".tmp." + std::to_string(::getpid());
++    const std::string target = kSessionPrefix + sessionId_;
++
++    ::unlink(temp.c_str());
++    if (::symlink(target.c_str(), temp.c_str()) != 0)
++    {
++        OPENAUTO_LOG(error) << "[AurigaSession] cannot create symlink " << temp;
++        return;
++    }
++
++    if (std::rename(temp.c_str(), link.c_str()) != 0)
++    {
++        OPENAUTO_LOG(error) << "[AurigaSession] cannot publish " << link;
++        ::unlink(temp.c_str());
++    }
++}
++
++void AurigaSessionManager::prune()
++{
++    std::vector<std::string> sessions;
++    std::error_code error;
++
++    for (const auto& entry : std::filesystem::directory_iterator(captureDir_, error))
++    {
++        const std::string name = entry.path().filename().string();
++        if (name.rfind(kSessionPrefix, 0) != 0 || name.size() <= std::strlen(kSessionPrefix))
++        {
++            continue;
++        }
++        if (!entry.is_directory(error))
++        {
++            continue;
++        }
++        sessions.push_back(name);
++    }
++
++    std::sort(sessions.begin(), sessions.end());
++
++    const std::size_t keep = keepSessions_ == 0 ? 1 : keepSessions_;
++    const std::size_t first = sessions.size() > keep ? sessions.size() - keep : 0;
++    const std::string current = kSessionPrefix + sessionId_;
++
++    for (std::size_t index = 0; index < first; ++index)
++    {
++        if (sessions[index] == current)
++        {
++            continue;
++        }
++
++        error.clear();
++        const auto removed = std::filesystem::remove_all(captureDir_ + "/" + sessions[index], error);
++        if (error)
++        {
++            OPENAUTO_LOG(warning) << "[AurigaSession] cannot prune " << sessions[index] << ": "
++                                  << error.message();
++        }
++        else
++        {
++            OPENAUTO_LOG(info) << "[AurigaSession] pruned " << sessions[index] << " ("
++                               << removed << " entries)";
++        }
++    }
++}
++
++}
++}
++}
++}
+diff --git a/src/autoapp/Projection/AurigaVideoOutput.cpp b/src/autoapp/Projection/AurigaVideoOutput.cpp
+new file mode 100644
+index 0000000..08a5dbe
+--- /dev/null
++++ b/src/autoapp/Projection/AurigaVideoOutput.cpp
+@@ -0,0 +1,117 @@
++/*
++*  This file is part of openauto project.
++*
++*  Auriga capture output: appends H.264 Annex-B access units to the current
++*  session's video.h264, rotating to a new segment before 4 GiB.
++*/
++
++#include <utility>
 +
 +#include <f1x/openauto/Common/Log.hpp>
 +#include <f1x/openauto/autoapp/Projection/AurigaVideoOutput.hpp>
@@ -840,9 +1243,12 @@ index 0000000..aed5f9e
 +namespace projection
 +{
 +
-+AurigaVideoOutput::AurigaVideoOutput(configuration::IConfiguration::Pointer configuration, std::string path)
++AurigaVideoOutput::AurigaVideoOutput(configuration::IConfiguration::Pointer configuration,
++                                     std::shared_ptr<AurigaSessionManager> session)
 +    : VideoOutput(std::move(configuration))
-+    , path_(std::move(path))
++    , session_(std::move(session))
++    , path_(session_->path("video.h264"))
++    , segmentBytes_(0)
 +{
 +}
 +
@@ -867,7 +1273,9 @@ index 0000000..aed5f9e
 +        return false;
 +    }
 +
-+    OPENAUTO_LOG(info) << "[AurigaVideoOutput] writing " << path_;
++    segmentBytes_ = 0;
++    OPENAUTO_LOG(info) << "[AurigaVideoOutput] writing " << path_ << " (session "
++                       << session_->sessionId() << ")";
 +    return true;
 +}
 +
@@ -889,6 +1297,12 @@ index 0000000..aed5f9e
 +    file_.write(reinterpret_cast<const char*>(buffer.cdata),
 +                static_cast<std::streamsize>(buffer.size));
 +    file_.flush();
++    segmentBytes_ += buffer.size;
++
++    if (segmentBytes_ >= AurigaSessionManager::SEGMENT_LIMIT)
++    {
++        this->rotate();
++    }
 +}
 +
 +void AurigaVideoOutput::stop()
@@ -901,6 +1315,24 @@ index 0000000..aed5f9e
 +        file_.close();
 +        OPENAUTO_LOG(info) << "[AurigaVideoOutput] closed " << path_;
 +    }
++}
++
++// Segment rollover: the same file restarts at offset 0 and the manifest count
++// advances, which is the stream server's signal to reopen it.
++void AurigaVideoOutput::rotate()
++{
++    file_.flush();
++    file_.close();
++    file_.open(path_, std::ios::binary | std::ios::trunc);
++    segmentBytes_ = 0;
++
++    if (!file_.is_open())
++    {
++        OPENAUTO_LOG(error) << "[AurigaVideoOutput] cannot reopen " << path_;
++        return;
++    }
++
++    session_->noteRotation("video");
 +}
 +
 +}
@@ -930,7 +1362,7 @@ index f7368b6..978ca42 100644
      return ifile.good();
    }
 diff --git a/src/autoapp/Service/ServiceFactory.cpp b/src/autoapp/Service/ServiceFactory.cpp
-index 6c04ab2..cccc35f 100644
+index 6c04ab2..16e0f9f 100644
 --- a/src/autoapp/Service/ServiceFactory.cpp
 +++ b/src/autoapp/Service/ServiceFactory.cpp
 @@ -19,6 +19,10 @@
@@ -944,13 +1376,14 @@ index 6c04ab2..cccc35f 100644
  #include <aasdk/Channel/MediaSink/Audio/Channel/MediaAudioChannel.hpp>
  #include <aasdk/Channel/MediaSink/Audio/Channel/SystemAudioChannel.hpp>
  #include <aasdk/Channel/MediaSink/Audio/Channel/GuidanceAudioChannel.hpp>
-@@ -44,11 +48,57 @@
+@@ -44,11 +48,59 @@
  #include <f1x/openauto/autoapp/Projection/QtAudioOutput.hpp>
  #include <f1x/openauto/autoapp/Projection/QtAudioInput.hpp>
  #include <f1x/openauto/autoapp/Projection/InputDevice.hpp>
 +#include <f1x/openauto/autoapp/Projection/AurigaAudioInput.hpp>
 +#include <f1x/openauto/autoapp/Projection/AurigaAudioOutput.hpp>
 +#include <f1x/openauto/autoapp/Projection/AurigaInputDevice.hpp>
++#include <f1x/openauto/autoapp/Projection/AurigaSession.hpp>
 +#include <f1x/openauto/autoapp/Projection/AurigaVideoOutput.hpp>
  #include <f1x/openauto/autoapp/Projection/LocalBluetoothDevice.hpp>
  #include <f1x/openauto/autoapp/Projection/DummyBluetoothDevice.hpp>
@@ -981,11 +1414,12 @@ index 6c04ab2..cccc35f 100644
 +    }
 +
 +    projection::IAudioOutput::Pointer
-+    makeAudioOutput(const std::string &name, uint32_t channelCount, uint32_t sampleSize,
++    makeAudioOutput(const std::shared_ptr<projection::AurigaSessionManager> &session,
++                    const std::string &name, uint32_t channelCount, uint32_t sampleSize,
 +                    uint32_t sampleRate, configuration::IConfiguration::Pointer configuration) {
-+      if (!captureDir().empty()) {
-+        return std::make_shared<projection::AurigaAudioOutput>(
-+            captureDir() + "/audio-" + name + ".wav", channelCount, sampleSize, sampleRate);
++      if (session != nullptr) {
++        return std::make_shared<projection::AurigaAudioOutput>(session, name, channelCount,
++                                                              sampleSize, sampleRate);
 +      }
 +
 +      if (configuration->getAudioOutputBackendType() ==
@@ -1002,7 +1436,20 @@ index 6c04ab2..cccc35f 100644
    ServiceFactory::ServiceFactory(boost::asio::io_service &ioService,
                                   configuration::IConfiguration::Pointer configuration)
        : ioService_(ioService), configuration_(std::move(configuration)) {
-@@ -111,11 +161,17 @@ namespace f1x::openauto::autoapp::service {
+@@ -59,6 +111,12 @@ namespace f1x::openauto::autoapp::service {
+     OPENAUTO_LOG(info) << "[ServiceFactory] create()";
+     ServiceList serviceList;
+ 
++    // One capture session per AA entity: mint the id before any sink opens so
++    // video, audio and input all write into the same directory.
++    captureSession_ = captureDir().empty()
++                          ? nullptr
++                          : std::make_shared<projection::AurigaSessionManager>(captureDir());
++
+     this->createMediaSinkServices(serviceList, messenger);
+     this->createMediaSourceServices(serviceList, messenger);
+     serviceList.emplace_back(this->createSensorService(messenger));
+@@ -111,11 +169,17 @@ namespace f1x::openauto::autoapp::service {
          break;
      }
  
@@ -1012,9 +1459,9 @@ index 6c04ab2..cccc35f 100644
 -        std::make_shared<projection::InputDevice>(*QApplication::instance(), configuration_,
 -                                                  std::move(screenGeometry), std::move(videoGeometry)));
 +    projection::IInputDevice::Pointer inputDevice;
-+    if (!captureDir().empty()) {
++    if (captureSession_ != nullptr) {
 +      inputDevice = std::make_shared<projection::AurigaInputDevice>(
-+          captureDir() + "/input.jsonl", videoGeometry);
++          captureSession_->path("input.jsonl"), videoGeometry);
 +    } else {
 +      QScreen *screen = QGuiApplication::primaryScreen();
 +      QRect screenGeometry = screen == nullptr ? QRect(0, 0, 1, 1) : screen->geometry();
@@ -1025,7 +1472,7 @@ index 6c04ab2..cccc35f 100644
  
      return std::make_shared<inputsource::InputSourceService>(ioService_, messenger, std::move(inputDevice));
    }
-@@ -125,11 +181,7 @@ namespace f1x::openauto::autoapp::service {
+@@ -125,11 +189,7 @@ namespace f1x::openauto::autoapp::service {
      OPENAUTO_LOG(info) << "[ServiceFactory] createMediaSinkServices()";
      if (configuration_->musicAudioChannelEnabled()) {
        OPENAUTO_LOG(info) << "[ServiceFactory] Media Audio Channel enabled";
@@ -1034,11 +1481,11 @@ index 6c04ab2..cccc35f 100644
 -          std::make_shared<projection::RtAudioOutput>(2, 16, 48000) :
 -          projection::IAudioOutput::Pointer(new projection::QtAudioOutput(2, 16, 48000),
 -                                            std::bind(&QObject::deleteLater, std::placeholders::_1));
-+      auto mediaAudioOutput = makeAudioOutput("media", 2, 16, 48000, configuration_);
++      auto mediaAudioOutput = makeAudioOutput(captureSession_, "media", 2, 16, 48000, configuration_);
  
        serviceList.emplace_back(
            std::make_shared<mediasink::MediaAudioService>(ioService_, messenger, std::move(mediaAudioOutput)));
-@@ -137,11 +189,7 @@ namespace f1x::openauto::autoapp::service {
+@@ -137,11 +197,7 @@ namespace f1x::openauto::autoapp::service {
  
      if (configuration_->guidanceAudioChannelEnabled()) {
        OPENAUTO_LOG(info) << "[ServiceFactory] Guidance Audio Channel enabled";
@@ -1047,11 +1494,11 @@ index 6c04ab2..cccc35f 100644
 -          std::make_shared<projection::RtAudioOutput>(1, 16, 16000) :
 -          projection::IAudioOutput::Pointer(new projection::QtAudioOutput(1, 16, 16000),
 -                                            std::bind(&QObject::deleteLater, std::placeholders::_1));
-+      auto guidanceAudioOutput = makeAudioOutput("guidance", 1, 16, 16000, configuration_);
++      auto guidanceAudioOutput = makeAudioOutput(captureSession_, "guidance", 1, 16, 16000, configuration_);
  
        serviceList.emplace_back(
            std::make_shared<mediasink::GuidanceAudioService>(ioService_, messenger,
-@@ -167,11 +215,7 @@ namespace f1x::openauto::autoapp::service {
+@@ -167,11 +223,7 @@ namespace f1x::openauto::autoapp::service {
       */
  
      OPENAUTO_LOG(info) << "[ServiceFactory] System Audio Channel enabled";
@@ -1060,20 +1507,19 @@ index 6c04ab2..cccc35f 100644
 -        std::make_shared<projection::RtAudioOutput>(1, 16, 16000) :
 -        projection::IAudioOutput::Pointer(new projection::QtAudioOutput(1, 16, 16000),
 -                                          std::bind(&QObject::deleteLater, std::placeholders::_1));
-+    auto systemAudioOutput = makeAudioOutput("system", 1, 16, 16000, configuration_);
++    auto systemAudioOutput = makeAudioOutput(captureSession_, "system", 1, 16, 16000, configuration_);
  
      serviceList.emplace_back(
          std::make_shared<mediasink::SystemAudioService>(ioService_, messenger, std::move(systemAudioOutput)));
-@@ -179,8 +223,15 @@ namespace f1x::openauto::autoapp::service {
+@@ -179,8 +231,14 @@ namespace f1x::openauto::autoapp::service {
  #ifdef USE_OMX
      auto videoOutput(std::make_shared<projection::OMXVideoOutput>(configuration_));
  #else
 -    projection::IVideoOutput::Pointer videoOutput(new projection::QtVideoOutput(configuration_),
 -                                                  std::bind(&QObject::deleteLater, std::placeholders::_1));
 +    projection::IVideoOutput::Pointer videoOutput;
-+    if (!captureDir().empty()) {
-+      videoOutput = std::make_shared<projection::AurigaVideoOutput>(
-+          configuration_, captureDir() + "/video.h264");
++    if (captureSession_ != nullptr) {
++      videoOutput = std::make_shared<projection::AurigaVideoOutput>(configuration_, captureSession_);
 +    } else {
 +      videoOutput = projection::IVideoOutput::Pointer(
 +          new projection::QtVideoOutput(configuration_),
@@ -1082,7 +1528,7 @@ index 6c04ab2..cccc35f 100644
  #endif
  
      OPENAUTO_LOG(info) << "[ServiceFactory] Video Channel enabled";
-@@ -191,8 +242,14 @@ namespace f1x::openauto::autoapp::service {
+@@ -191,8 +249,14 @@ namespace f1x::openauto::autoapp::service {
    void ServiceFactory::createMediaSourceServices(f1x::openauto::autoapp::service::ServiceList &serviceList,
                                                   aasdk::messenger::IMessenger::Pointer messenger) {
      OPENAUTO_LOG(info) << "[ServiceFactory] createMediaSourceServices()";

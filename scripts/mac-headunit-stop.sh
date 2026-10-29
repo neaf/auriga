@@ -19,6 +19,6 @@ stop_pidfile /tmp/auriga-mac-caffeinate.pid
 stop_pidfile /tmp/auriga-fifo-writer.pid
 
 pkill -f "[b]uild-openauto-mac/bin/autoapp" 2>/dev/null || true
-pkill -f "[a]uriga_stream.py --video" 2>/dev/null || true
+pkill -f "[a]uriga_stream.py" 2>/dev/null || true
 
 echo "Mac head unit stopped."

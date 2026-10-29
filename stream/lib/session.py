@@ -1,14 +1,17 @@
-"""Capture-session naming, retention and manifest parsing.
+"""Capture-session naming, retention, manifest parsing and following.
 
-Pure functions over directory names and JSON text: no filesystem and no wall
-clock, so `tests/` covers them without a head unit. The on-disk contract is
-documented in `docs/Android Auto head unit.md`; the stream server's view of it
-in `docs/Stream protocol.md`.
+Naming, retention and parsing are pure functions over directory names and JSON
+text. `SessionFollower` is the only part that reads the filesystem: it resolves
+`<capture-dir>/current` and reads `manifest.json`, so `tests/` can drive it with
+a temporary directory and no head unit. The on-disk contract is documented in
+`docs/Android Auto head unit.md`; the stream server's view of it in
+`docs/Stream protocol.md`.
 """
 
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Iterable, Mapping
@@ -115,3 +118,97 @@ def parse_manifest(text) -> Manifest | None:
         fps=_positive_float(data.get("fps"), DEFAULT_FPS),
         segments=segments,
     )
+
+
+def read_current(capture_dir, name: str = CURRENT_NAME) -> str | None:
+    """Session directory name `<capture_dir>/<name>` points at, or None.
+
+    The head unit publishes a relative symlink named `session-<id>`; anything
+    that is not such a link (missing, a plain file, a foreign target) is
+    reported as "no session" rather than guessed at.
+    """
+    try:
+        target = os.readlink(os.path.join(capture_dir, name))
+    except OSError:
+        return None
+    base = os.path.basename(target.rstrip(os.sep))
+    return base if is_session_name(base) else None
+
+
+def read_manifest(directory, name: str = MANIFEST_NAME) -> Manifest | None:
+    """Parse `<directory>/manifest.json`, or None when it is absent or invalid."""
+    try:
+        with open(os.path.join(directory, name), "r", encoding="utf-8") as handle:
+            text = handle.read()
+    except (OSError, UnicodeDecodeError):
+        return None
+    return parse_manifest(text)
+
+
+@dataclass(frozen=True)
+class SessionEvent:
+    """A change the stream server has to act on.
+
+    `changed` is True only when `current` moved to a different session; the
+    first observation of a session reports `changed == False` and lists every
+    stream in `streams`, so a fresh server adopts an existing session without
+    broadcasting a reset. `streams` names the streams whose file must be
+    reopened at offset 0: all of them for a new session, otherwise only those
+    whose segment count advanced.
+    """
+
+    name: str
+    directory: str
+    manifest: Manifest
+    changed: bool
+    streams: tuple[str, ...]
+
+
+class SessionFollower:
+    """Follows `<capture-dir>/current` and its `manifest.json`.
+
+    Replaces the file-size heuristic the server used to detect a session
+    change: `current` names the live session, and the manifest segment counts
+    name a rollover. Both are written atomically by the head unit.
+    """
+
+    def __init__(self, capture_dir, current_name: str = CURRENT_NAME,
+                 manifest_name: str = MANIFEST_NAME):
+        self.capture_dir = str(capture_dir)
+        self.current_name = current_name
+        self.manifest_name = manifest_name
+        self.name: str | None = None
+        self._counts: dict[str, int] | None = None
+
+    def poll(self) -> SessionEvent | None:
+        """Return the pending change, or None when nothing moved."""
+        name = read_current(self.capture_dir, self.current_name)
+        if name is None:
+            return None
+
+        directory = os.path.join(self.capture_dir, name)
+        manifest = read_manifest(directory, self.manifest_name)
+        if manifest is None:
+            manifest = Manifest(session=session_id_from_name(name) or "")
+
+        changed = self.name is not None and name != self.name
+        previous = self._counts
+        if changed or previous is None:
+            streams = STREAMS
+        else:
+            streams = tuple(
+                stream for stream in STREAMS
+                if manifest.segment_count(stream) != previous.get(stream, 0)
+            )
+            if not streams:
+                return None
+
+        self.name = name
+        self._counts = {stream: manifest.segment_count(stream) for stream in STREAMS}
+        return SessionEvent(
+            name=name,
+            directory=directory,
+            manifest=manifest,
+            changed=changed,
+            streams=tuple(streams),
+        )
