@@ -358,8 +358,8 @@ certificate.
 - `scripts/auriga.sh` — start/stop/status for the macOS head unit (lock file,
   readiness poll).
 - `aasdk/`, `build-aasdk/` — aasdk source/build on the Pi (not in this repo).
-- `scripts/aoa_probe.py` — standalone AOA switch/read.
-- `scripts/aoa_read.py` — passive bulk-IN reader.
+- `tools/aoa_probe.py` — standalone AOA switch/read.
+- `tools/aoa_read.py` — passive bulk-IN reader.
 - `dongle-backup/` — original and current dongle config files + restore notes.
 - `posttrip/` — post-car-trip dongle config snapshots.
 - `README.md` — this file.

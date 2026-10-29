@@ -22,6 +22,7 @@ stream server and browser consume those files (`docs/Stream protocol.md`).
 | 4 | `patches/openauto-auriga-gps-guard.patch` | `openauto` | call `gps_read()` only after a successful `gps_open()` |
 | 5 | `patches/openauto-auriga-identity.patch` | `openauto` | AA identity `display_name`/`make`/`model` → `Auriga` |
 | — | `patches/aasdk-usb-filter.patch` | `aasdk-upstream` | optional accessory-source VID/PID filter, refuse AOA+ADB |
+| — | `patches/aasdk-version-absl.patch` | `aasdk-upstream` | AA protocol minor 6 → 7, absl include path for `aap_protobuf` |
 
 The three `openauto-auriga-*` patches are incremental: they assume the earlier
 patches are applied. Patch 1 defines `projection::captureModeEnabled()`
@@ -34,6 +35,7 @@ Patch application, once per fresh clone:
 
 ```bash
 git -C aasdk-upstream apply "$PWD/patches/aasdk-usb-filter.patch"
+git -C aasdk-upstream apply "$PWD/patches/aasdk-version-absl.patch"
 git -C openauto apply "$PWD/patches/openauto-capture.patch"
 git -C openauto apply "$PWD/patches/openauto-macos.patch"
 git -C openauto apply "$PWD/patches/openauto-auriga-usb-filter.patch"
@@ -43,19 +45,18 @@ git -C openauto apply "$PWD/patches/openauto-auriga-identity.patch"
 
 Use absolute patch paths: a relative path is resolved inside the nested clone and
 fails (`git -C openauto apply --check --reverse patches/...` reports
-`can't open patch`).
+`can't open patch`). `scripts/build.sh` performs this list on fresh clones and
+builds both targets (`docs/Build.md#one-command-build`).
 
-### aasdk edits live only in the nested tree
+### aasdk needs AA 1.7 and absl include paths
 
-Symptom: a rebuild from `patches/` alone leaves aasdk at AA protocol 1.6 and
-cannot compile the generated protobuf on Darwin.
-Cause: two aasdk edits have no patch file: `AASDK_MINOR = 7` in
-`aasdk-upstream/include/aasdk/Version.hpp:22-23`, and the Darwin absl include
-block in `aasdk-upstream/protobuf/CMakeLists.txt`. The OpenAuto side is fully
-described by the five patches above.
-Workaround: apply the two edits by hand after the patch list, or build from the
-existing nested trees. See `docs/Build.md`.
-Location: `aasdk-upstream/Version.hpp`, `aasdk-upstream/protobuf/CMakeLists.txt`.
+Symptom: a stock aasdk advertises AA protocol 1.6, and on Darwin the generated
+`aap_protobuf` target fails on `absl/...` includes from protobuf 36.
+Cause: `AASDK_MINOR` is `6` upstream, and `aap_protobuf` does not add absl's
+include directories.
+Workaround: `patches/aasdk-version-absl.patch` (minor → 7, absl include path on
+Darwin). A tree without that patch cannot negotiate the dongle's 1.7 session.
+Location: `include/aasdk/Version.hpp:22-23`, `protobuf/CMakeLists.txt`.
 
 ## USB and the AOA switch
 

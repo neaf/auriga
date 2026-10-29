@@ -1,0 +1,28 @@
+diff --git a/include/aasdk/Version.hpp b/include/aasdk/Version.hpp
+index 3a40ceb..a74e9d4 100644
+--- a/include/aasdk/Version.hpp
++++ b/include/aasdk/Version.hpp
+@@ -20,4 +20,4 @@
+ #include <stdint.h>
+ 
+ static const uint16_t AASDK_MAJOR = 1;
+-static const uint16_t AASDK_MINOR = 6;
++static const uint16_t AASDK_MINOR = 7;
+diff --git a/protobuf/CMakeLists.txt b/protobuf/CMakeLists.txt
+index 1a32d31..71423d2 100644
+--- a/protobuf/CMakeLists.txt
++++ b/protobuf/CMakeLists.txt
+@@ -79,6 +79,13 @@ else()
+     add_library(aap_protobuf SHARED ${PROTO_SRCS} ${PROTO_HDRS})
+ endif()
+ 
++# Protobuf 36 headers include absl headers; brew's protobuf dylib links absl,
++# but the generated target also needs the include path.
++if(CMAKE_SYSTEM_NAME STREQUAL "Darwin" AND TARGET absl::base)
++    target_include_directories(aap_protobuf PUBLIC
++        $<TARGET_PROPERTY:absl::base,INTERFACE_INCLUDE_DIRECTORIES>)
++endif()
++
+ target_link_libraries(aap_protobuf PUBLIC ${PROTOBUF_LIBRARIES})
+ include_directories(
+         ${CMAKE_CURRENT_BINARY_DIR}

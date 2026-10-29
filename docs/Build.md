@@ -2,8 +2,13 @@
 
 macOS (Apple Silicon) is the only supported host. Two CMake projects build from
 two nested clones: aasdk (`build-aasdk-mac`) and OpenAuto
-(`build-openauto-mac`). The root repo tracks `patches/`, `stream/`, `scripts/`
-and docs; the nested clones and build directories are ignored.
+(`build-openauto-mac`). The root repo tracks `patches/`, `stream/`, `scripts/`,
+`tools/` and docs; the nested clones and build directories are ignored.
+
+`patches/` reproduces both nested clones from their pinned commits. It is the
+source of truth for the whole head unit, and `scripts/build.sh` builds from it
+alone: a run of that script is the check that no change lives only in a nested
+tree.
 
 ## Toolchain
 
@@ -31,17 +36,53 @@ ls "$(brew --prefix qt@5)/lib/cmake" | grep -E "Qt5(Bluetooth|Multimedia|Network
 
 ## Build order
 
-1. aasdk at `9bf6adf` with `patches/aasdk-usb-filter.patch` and two tree edits.
+1. aasdk at `9bf6adf` with `patches/aasdk-usb-filter.patch` then
+   `patches/aasdk-version-absl.patch`.
 2. OpenAuto at `4cc739b8` with the five OpenAuto patches, in order.
 3. The stream server's `.venv`.
 
+Seven patches in total. A pristine clone plus the seven reproduces the nested
+trees byte for byte.
+
+### One-command build
+
+```bash
+./scripts/build.sh             # artifacts kept in .build-from-patches/
+./scripts/build.sh -t          # scratch dir, deleted on exit
+./scripts/build.sh -d DIR -j4  # work in DIR with 4 compile jobs
+```
+
+The script materializes both upstreams at their pinned commits under the work
+root (fresh clone, or a reset of the clone from an earlier run), applies every
+patch in `patches/` in the order above, configures with the lines below, and
+builds `aasdk` then `autoapp`. It fails if a patch does not apply, if `patches/`
+holds a file the script does not apply, or if an artifact is missing.
+
+It never reads or writes the nested `openauto/`/`aasdk-upstream/` clones or
+`build-aasdk-mac`/`build-openauto-mac`, so it is safe to run while the head unit
+is up. Artifacts of the default run:
+
+| Path | Content |
+| --- | --- |
+| `.build-from-patches/build-aasdk/lib/libaasdk.a` | static aasdk, AA 1.7 |
+| `.build-from-patches/build-openauto/bin/autoapp` | `autoapp` |
+
+`.build-from-patches/` is gitignored. `scripts/auriga.sh` runs
+`build-openauto-mac/bin/autoapp`, so the configure blocks below produce the
+binary the head unit actually starts.
+
 ### aasdk
 
-Two edits are applied to the nested tree and are not in any patch file:
+```bash
+git -C aasdk-upstream apply "$PWD/patches/aasdk-usb-filter.patch"
+git -C aasdk-upstream apply "$PWD/patches/aasdk-version-absl.patch"
+```
 
-- `aasdk-upstream/include/aasdk/Version.hpp:22-23`: `AASDK_MINOR = 7` (AA 1.7).
-- `aasdk-upstream/protobuf/CMakeLists.txt`: add absl's include directories to
-  `aap_protobuf` on Darwin, because protobuf 36 headers include `absl/...`:
+`aasdk-version-absl.patch` carries the two aasdk changes this host needs:
+
+- `include/aasdk/Version.hpp:22-23`: `AASDK_MINOR = 7` (AA 1.7).
+- `protobuf/CMakeLists.txt`: absl's include directories on `aap_protobuf`,
+  because protobuf 36 headers include `absl/...`:
 
 ```cmake
 if(CMAKE_SYSTEM_NAME STREQUAL "Darwin" AND TARGET absl::base)
@@ -53,8 +94,6 @@ endif()
 Then:
 
 ```bash
-git -C aasdk-upstream apply "$PWD/patches/aasdk-usb-filter.patch"
-
 cmake -S aasdk-upstream -B build-aasdk-mac \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
@@ -103,18 +142,23 @@ cmake --build build-openauto-mac --target autoapp -j8
 (`CMAKE_CXX_FLAGS_INIT`) for `<aasdk/...>`. `-DNOPI=ON` disables the OMX video
 backend and selects the plain Qt/capture backends.
 
-Patch order matters: `openauto-capture` then `openauto-macos`, then the three
-incremental `auriga-*` patches. The macOS and USB-filter patches call
+Patch order matters. aasdk: `aasdk-usb-filter` then `aasdk-version-absl`
+(different files, so the order is only for a stable list). OpenAuto:
+`openauto-capture` then `openauto-macos`, then the three incremental `auriga-*`
+patches. The macOS and USB-filter patches call
 `projection::captureModeEnabled()`, which patch 1 defines in
 `AurigaSession.cpp`. Patches 2 and 3 both rewrite `App.cpp`; patches 1 and 4
 both rewrite `SensorService.cpp`. Apply and verify with absolute paths, because a
 relative path is resolved inside the nested clone:
 
 ```bash
+git -C openauto apply --check --reverse "$PWD/patches/openauto-capture.patch"
+git -C openauto apply --check --reverse "$PWD/patches/openauto-macos.patch"
 git -C openauto apply --check --reverse "$PWD/patches/openauto-auriga-usb-filter.patch"
 git -C openauto apply --check --reverse "$PWD/patches/openauto-auriga-gps-guard.patch"
 git -C openauto apply --check --reverse "$PWD/patches/openauto-auriga-identity.patch"
 git -C aasdk-upstream apply --check --reverse "$PWD/patches/aasdk-usb-filter.patch"
+git -C aasdk-upstream apply --check --reverse "$PWD/patches/aasdk-version-absl.patch"
 ```
 
 ## Build quirks
@@ -174,17 +218,14 @@ Symptom: a new `.cpp` under `openauto/src` is not compiled.
 Cause: OpenAuto collects sources with `file(GLOB_RECURSE)` at configure time.
 Workaround: re-run the configure step after adding or removing files.
 
-### `patches/` does not cover aasdk
+### absl headers in `aap_protobuf`
 
-Symptom: a pristine clone + the documented patches leaves aasdk at AA protocol
-1.6, and the Darwin build of `aap_protobuf` fails on `absl/...` headers.
-Cause: the two aasdk edits above have no patch file. The five OpenAuto patches
-fully describe `openauto/`: applying them to a pristine `4cc739b8` tree
-reproduces the nested tree byte for byte.
-Workaround: apply the two aasdk edits after the patch list, or build from the
-existing nested trees.
-Location: `aasdk-upstream/include/aasdk/Version.hpp`,
-`aasdk-upstream/protobuf/CMakeLists.txt`.
+Symptom: the aasdk build fails on `absl/...` includes with protobuf 36.
+Cause: protobuf's public headers include absl, and `aap_protobuf` does not add
+absl's include directories itself.
+Workaround: `patches/aasdk-version-absl.patch` adds the target property on
+Darwin; a build that skips the patch needs the same block by hand.
+Location: `patches/aasdk-version-absl.patch`, `protobuf/CMakeLists.txt`.
 
 ## Artifacts
 
@@ -194,6 +235,8 @@ Location: `aasdk-upstream/include/aasdk/Version.hpp`,
 | `build-aasdk-mac/lib/libaap_protobuf.a` | static generated protobuf |
 | `build-openauto-mac/bin/autoapp` | symlink to the versioned binary |
 | `build-openauto-mac/bin/autoapp-2026.10.28+git.4cc739b.dirty` | build of the dirty `4cc739b8` tree; the `.dirty` suffix means the binary matches the tree, not `patches/` |
+| `.build-from-patches/build-aasdk/lib/libaasdk.a` | `scripts/build.sh` aasdk, from `patches/` only |
+| `.build-from-patches/build-openauto/bin/autoapp` | `scripts/build.sh` `autoapp`, from `patches/` only |
 
 ## Stream server environment
 
@@ -209,34 +252,42 @@ The start script prefers `$AURIGA_PYTHON`, then `.venv/bin/python`, then bare
 ## Verification
 
 ```bash
+./scripts/build.sh -t          # clone, patch, build from patches/ alone; temp tree
 cmake --build build-aasdk-mac --target aasdk -j8
 cmake --build build-openauto-mac --target autoapp -j8
-.venv/bin/python -m py_compile $(find stream scripts -name '*.py')
+.venv/bin/python -m py_compile $(find stream scripts tools -name '*.py')
 .venv/bin/python -m unittest discover -s tests -v
 for f in scripts/*.sh openauto-config/*.sh; do bash -n "$f"; done
+git -C openauto apply --check --reverse "$PWD/patches/openauto-capture.patch"
+git -C openauto apply --check --reverse "$PWD/patches/openauto-macos.patch"
 git -C openauto apply --check --reverse "$PWD/patches/openauto-auriga-usb-filter.patch"
 git -C openauto apply --check --reverse "$PWD/patches/openauto-auriga-gps-guard.patch"
 git -C openauto apply --check --reverse "$PWD/patches/openauto-auriga-identity.patch"
 git -C aasdk-upstream apply --check --reverse "$PWD/patches/aasdk-usb-filter.patch"
+git -C aasdk-upstream apply --check --reverse "$PWD/patches/aasdk-version-absl.patch"
 ```
 
-Build success is `Built target aasdk` and `Built target autoapp`.
+Build success is `build: ok: 7 patches -> aasdk + autoapp`, `Built target aasdk`
+and `Built target autoapp`. The seven reverse checks pass only if `patches/` and
+the nested trees agree; a patch that fails one is stale.
 
-Capture verification:
+Capture verification (`current` is the symlink to the live session dir):
 
 ```bash
 ffprobe -v error -select_streams v:0 -count_frames \
   -show_entries stream=width,height,profile,level,nb_read_frames \
-  -of default=nw=1 captures-mac/video.h264        # 1280x720 Baseline, level 31
+  -of default=nw=1 captures-mac/current/video.h264        # 1280x720 Baseline, level 31
 ffprobe -v error -show_entries stream=codec_name,sample_rate,channels \
-  -of default=nw=1 captures-mac/audio-media.wav   # pcm_s16le, 48000, 2
-ffmpeg -loglevel info -i captures-mac/video.h264 -f null - 2>&1 | tail -1
+  -of default=nw=1 captures-mac/current/audio-media.wav   # pcm_s16le, 48000, 2
+ffmpeg -loglevel info -i captures-mac/current/video.h264 -f null - 2>&1 | tail -1
 ```
 
 Raw H.264 has no container timestamps: `ffprobe` reports
 `r_frame_rate=1200000/1`, so frame count is the only usable duration proxy.
 
-There is no single build script; the commands above are the full build and
-check path. `tests/` is a stdlib `unittest` suite for the pure helpers in
-`stream/lib/` (`h264`, `clock`, `session`) and runs without a head unit.
+`scripts/build.sh` is the single from-patches build; the incremental commands
+above are the fast path. `tests/` is a stdlib `unittest` suite for the pure
+helpers in `stream/lib/` (`h264`, `clock`, `session`) and runs without a head
+unit. `tools/` holds the standalone dongle diagnostics (`aoa_probe.py`,
+`aoa_read.py`); they need `pyusb` and the dongle to themselves.
 Runtime verification of the rig is in `docs/Android Auto head unit.md`.

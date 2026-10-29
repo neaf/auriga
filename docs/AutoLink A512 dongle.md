@@ -18,7 +18,7 @@ directly).
 | CarPlay | `05ac:12a8` | Apple | Neither matched, ignored without a log (`USBHub.cpp:89-96,115`) |
 
 `2717` is the Xiaomi vendor ID that the dongle reuses; it is not a dongle
-property (`scripts/aoa_probe.py:5`). The IDs are observed on this host with
+property (`tools/aoa_probe.py:5`). The IDs are observed on this host with
 `ioreg`; no vendor datasheet is in the repo, so they are `unverified` as vendor
 facts beyond observation.
 
@@ -55,26 +55,26 @@ The host accepts AOA version 1 or 2
 (`[2,0]`) per the operating notes; `unverified`, because no probe output is
 stored.
 
-`scripts/aoa_probe.py` is a standalone diagnostic with a different string set
+`tools/aoa_probe.py` is a standalone diagnostic with a different string set
 (`Auriga`, `Auriga Pi Headunit`, `Auriga AA capture`, `1.0`,
 `https://auriga.invalid`, `auriga-pi`). Its `start` mode sends
 `ACCESSORY_START` to whatever device matches `2717:ff40` and must not run while
-`autoapp` owns the dongle. `scripts/aoa_read.py` reads the AOA bulk-IN endpoint.
+`autoapp` owns the dongle. `tools/aoa_read.py` reads the AOA bulk-IN endpoint.
 
 ## AOA transport
 
 Two bulk endpoints, IN `0x81` and OUT `0x02`, 512-byte packets. `unverified`
 (doc-derived): aasdk assumes exactly two endpoints and picks IN/OUT by the
 endpoint-address bit (`aasdk-upstream/src/USB/AOAPDevice.cpp:28-39`);
-`scripts/aoa_read.py:43` reads 512-byte chunks.
+`tools/aoa_read.py:43` reads 512-byte chunks.
 
 ## AA protocol version
 
 The session negotiates AA 1.7, logged as `Version Received: 256.1792`
 (`logs/openauto-mac-*.log`). aasdk advertises major 1, minor 7
-(`aasdk-upstream/include/aasdk/Version.hpp:22-23`). The minor bump exists only
-in the nested `aasdk-upstream` tree; no file under `patches/` carries it (see
-`docs/Build.md`).
+(`aasdk-upstream/include/aasdk/Version.hpp:22-23`). The minor bump is
+`patches/aasdk-version-absl.patch`; the same patch adds the absl include path to
+`aap_protobuf` (`docs/Build.md#aasdk`).
 
 ## MTP config store
 
@@ -204,9 +204,9 @@ Whether the latch is reachable without an iPhone is `unverified`.
 Symptom: a cold `autoapp` can start between arrivals and wait at
 `Waiting for device...`.
 Cause: while idle in MTP the dongle re-enumerates roughly every 22.0 s; this is
-the de-facto discovery watchdog (`scripts/aoa_probe.py:4-7`).
+the de-facto discovery watchdog (`tools/aoa_probe.py:4-7`).
 Workaround: leave `autoapp` running; it catches the next arrival.
-Location: `scripts/aoa_probe.py:90` polls every 0.25 s. The interval was measured
+Location: `tools/aoa_probe.py:90` polls every 0.25 s. The interval was measured
 on 2026-10-28 and not re-measured after the BT DB reset: `unverified`.
 
 ## Bluetooth and Wi-Fi identity

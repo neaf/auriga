@@ -40,6 +40,7 @@ Pi and the SSH tunnel.
 | Area | File | Change |
 | --- | --- | --- |
 | aasdk | `include/aasdk/USB/USBHub.hpp`, `src/USB/USBHub.cpp` | Optional accessory-source VID/PID; check the descriptor before opening; only AOA-switch the configured source; ignore AOA+ADB phones when filtering. Patch: `patches/aasdk-usb-filter.patch`. |
+| aasdk | `include/aasdk/Version.hpp`, `protobuf/CMakeLists.txt` | AA protocol 1.7 and the absl include path for `aap_protobuf`. Patch: `patches/aasdk-version-absl.patch`. |
 | OpenAuto | `src/autoapp/autoapp.cpp` | Pass `0x2717, 0xFF40` to `USBHub`. Patch: `patches/openauto-auriga-usb-filter.patch`. |
 | OpenAuto | `src/autoapp/App.cpp` | Skip `enumerateDevices()` in capture mode; it runs the AOA query chain against every USB device. Same patch. |
 | OpenAuto | `src/autoapp/Service/Sensor/SensorService.cpp` | Call `gps_read()` only after a successful `gps_open()`; prevents intermittent `gps_shm_read` segfaults without GPSD. Patch: `patches/openauto-auriga-gps-guard.patch`. |
@@ -61,14 +62,16 @@ cmake --build build-openauto-mac --target autoapp -j8
 Patch order for a fresh tree:
 
 ```bash
-# aasdk-upstream (plus the Version.hpp / protobuf CMake edits in MAC-PORT.md)
+# aasdk-upstream
 git -C aasdk-upstream apply /path/to/auriga/patches/aasdk-usb-filter.patch
+git -C aasdk-upstream apply /path/to/auriga/patches/aasdk-version-absl.patch
 
 # openauto at 4cc739b8
 git -C openauto apply /path/to/auriga/patches/openauto-capture.patch
 git -C openauto apply /path/to/auriga/patches/openauto-macos.patch
 git -C openauto apply /path/to/auriga/patches/openauto-auriga-usb-filter.patch
 git -C openauto apply /path/to/auriga/patches/openauto-auriga-gps-guard.patch
+git -C openauto apply /path/to/auriga/patches/openauto-auriga-identity.patch
 ```
 
 The two `openauto-auriga-*` patches are **incremental**: they assume the
@@ -77,8 +80,11 @@ current working tree with:
 
 ```bash
 git -C openauto apply --check --reverse patches/openauto-auriga-usb-filter.patch
-git -C aasdk-upstream apply --check --reverse patches/aasdk-usb-filter.patch
+git -C aasdk-upstream apply --check --reverse patches/aasdk-version-absl.patch
 ```
+
+`scripts/build.sh` applies all seven to fresh clones and builds both targets;
+run it after changing a patch.
 
 ## Editing workflow
 
@@ -91,11 +97,13 @@ git -C aasdk-upstream apply --check --reverse patches/aasdk-usb-filter.patch
 6. Commit the **root repo** (nested clones are ignored), including the patch
    and docs.
 
-Regenerate the aasdk patch:
+Regenerate the aasdk patches:
 
 ```bash
 git -C aasdk-upstream diff -- include/aasdk/USB/USBHub.hpp src/USB/USBHub.cpp \
   > patches/aasdk-usb-filter.patch
+git -C aasdk-upstream diff -- include/aasdk/Version.hpp protobuf/CMakeLists.txt \
+  > patches/aasdk-version-absl.patch
 ```
 
 For the incremental OpenAuto patches, diff against the same files with the

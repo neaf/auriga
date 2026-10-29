@@ -4,6 +4,7 @@
 
 # Build outputs
 /build-*/
+/.build-from-patches/
 *.o
 *.so
 

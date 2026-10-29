@@ -221,3 +221,39 @@
   `unittest` (94), both builds, `status` against the live pair, `start`
   refusal, `usage` exit 2, and the `run.sh` missing-env guard. The
   `start`→`status`→`stop` cycle is M7, run when the dongle is free.
+
+- **P7: `scripts/build.sh` keeps its artifacts by default.** A script that
+  built into a throwaway directory could not satisfy the phase exit criterion
+  ("a fresh clone + `scripts/build.sh` produces a working `autoapp`"). Default
+  work root is `.build-from-patches/` (gitignored; sources, build dirs,
+  `build.log`); `-t` is the disposable variant (mktemp, removed on success, kept
+  on failure so the log survives); `-d DIR` chooses another root. Both modes run
+  the same clone -> apply -> configure -> build path, and neither reads or
+  writes the nested `openauto/`/`aasdk-upstream/` clones or `build-*-mac`, so it
+  is safe while the head unit is up. The script also refuses to run when
+  `patches/` holds a patch that its ordered lists do not apply (the FR-BLD-02
+  self-check).
+
+- **P7: verification built into `/tmp/auriga-p7-check`, not the repo.** The live
+  pair (autoapp 29079, stream 29090) and the existing build dirs were left
+  alone: `./scripts/build.sh -d /tmp/auriga-p7-check -j8` (full clone + 7
+  patches + both targets), then the same command again on the existing tree to
+  exercise `prepare_tree`'s reset branch and the cmake incremental path. The
+  temp variants (`-t` success/cleanup, `-t` failure/keep, the unapplied-patch
+  guard, `-h`, unknown option) were exercised with a stub `cmake` on `PATH` so
+  no second cold build was needed.
+
+- **P7: docs and files outside the phase touch list.**
+  `docs/AutoLink A512 dongle.md` (six `scripts/aoa_*` -> `tools/aoa_*`; the AA
+  1.7 paragraph now names `patches/aasdk-version-absl.patch` instead of saying
+  no patch carries the bump), `README.md` (the two `tools/` entries),
+  `DEVELOPING.md` (aasdk patch row, apply list, reverse check, regeneration
+  command), `.gitignore` (`/.build-from-patches/`), and `docs/Build.md` capture
+  verification paths (`captures-mac/current/...`, stale since P3).
+
+- **P7: `patches/` completeness re-verified, not just reverse-applied.** A
+  pristine aasdk `9bf6adf` + `aasdk-usb-filter` + `aasdk-version-absl` is
+  byte-identical to `aasdk-upstream/` (`diff -r`, no `.git`), and a pristine
+  openauto `4cc739b8` + the five OpenAuto patches is byte-identical to
+  `openauto/`. All seven patches also `--check --reverse` clean against the live
+  trees.
