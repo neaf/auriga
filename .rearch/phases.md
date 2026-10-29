@@ -93,8 +93,11 @@ Touches: `patches/openauto-capture.patch` (add SessionManager: mint id, create
 video/audio/input sinks to the shared id), nested `openauto/` working tree
 (edit + regenerate patch), `stream/lib/session.py` (manifest follower),
 `stream/server.py` (resolve `current`, reset on pointer change, reopen on
-segment-count change), `docs/Stream protocol.md` (session/`current`/manifest
-section), `docs/Android Auto head unit.md` (capture file contract).
+segment-count change), `stream/auriga_stream.py` (split first: move `Streamer`
+and `serve_http` to `stream/server.py`; this file stays the thin CLI),
+`tests/test_session.py` (follower), `docs/Stream protocol.md`
+(session/`current`/manifest section), `docs/Android Auto head unit.md` (capture
+file contract).
 
 Deletes: the `size < offset` truncation heuristic in the stream server.
 
@@ -123,7 +126,8 @@ Touches: `stream/server.py` (per-viewer queue, single viewer, content clock,
 keyframe request, manifest geometry in `hello`), `stream/web/app.js` (re-anchor
 on backward jump, queue-aware decode, `{"type":"keyframe"}`, single-socket
 handling), `stream/web/index.html` (canvas sized from `hello`),
-`stream/lib/clock.py`, `stream/lib/h264.py`, `docs/Stream protocol.md`
+`stream/lib/clock.py`, `stream/lib/h264.py`, `tests/test_clock.py`,
+`tests/test_h264.py`, `docs/Stream protocol.md`
 (single-viewer, keyframe request, content clock, `hello` geometry).
 
 Deletes: `max_gop`/`VIDEO_FRAME_US` dead branches, the multi-client broadcast

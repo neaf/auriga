@@ -208,7 +208,8 @@ The start script prefers `$AURIGA_PYTHON`, then `.venv/bin/python`, then bare
 ```bash
 cmake --build build-aasdk-mac --target aasdk -j8
 cmake --build build-openauto-mac --target autoapp -j8
-.venv/bin/python -m py_compile stream/auriga_stream.py scripts/aoa_probe.py scripts/aoa_read.py
+.venv/bin/python -m py_compile $(find stream scripts -name '*.py')
+.venv/bin/python -m unittest discover -s tests -v
 for f in scripts/*.sh openauto-config/*.sh; do bash -n "$f"; done
 git -C openauto apply --check --reverse "$PWD/patches/openauto-auriga-usb-filter.patch"
 git -C openauto apply --check --reverse "$PWD/patches/openauto-auriga-gps-guard.patch"
@@ -231,6 +232,7 @@ ffmpeg -loglevel info -i captures-mac/video.h264 -f null - 2>&1 | tail -1
 Raw H.264 has no container timestamps: `ffprobe` reports
 `r_frame_rate=1200000/1`, so frame count is the only usable duration proxy.
 
-There is no automated test suite and no single build script; the commands above
-are the full build and check path. Runtime verification of the rig is in
-`docs/Android Auto head unit.md`.
+There is no single build script; the commands above are the full build and
+check path. `tests/` is a stdlib `unittest` suite for the pure helpers in
+`stream/lib/` (`h264`, `clock`, `session`) and runs without a head unit.
+Runtime verification of the rig is in `docs/Android Auto head unit.md`.

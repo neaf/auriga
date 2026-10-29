@@ -12,7 +12,7 @@ JSON control channel. It also serves the static client from `stream/web`.
 | WebSocket | `127.0.0.1:8081` | `hello`, video/audio frames, `reset`, client input |
 
 Both bind loopback only and have no authentication
-(`stream/auriga_stream.py:395,417`). Nothing else may be exposed.
+(`stream/auriga_stream.py:312,334`). Nothing else may be exposed.
 
 One asyncio loop runs `video_loop`, `audio_loop`, the WebSocket server and one
 task per connected client. `self.lock` (`asyncio.Lock`) serializes GOP
@@ -32,9 +32,9 @@ a separate daemon thread.
 
 | Input | Format | Read position |
 | --- | --- | --- |
-| `video.h264` | Annex-B H.264, 4-byte start codes (see `docs/Android Auto head unit.md`) | last type-5 NAL within the last 8 MiB, else offset 0 (`auriga_stream.py:89-113,135-136`) |
-| `audio-media.wav` | 44-byte PCM WAV header, 48 kHz, 2 ch, 16-bit | end of file (`max(44, size)`) (`auriga_stream.py:137-140`) |
-| input FIFO | text lines `tap|down|move|up X Y` | written per client event (`auriga_stream.py:372-381`) |
+| `video.h264` | Annex-B H.264, 4-byte start codes (see `docs/Android Auto head unit.md`) | last type-5 NAL within the last 8 MiB, else offset 0 (`stream/lib/h264.py:79-109`; seek `auriga_stream.py:53`) |
+| `audio-media.wav` | 44-byte PCM WAV header, 48 kHz, 2 ch, 16-bit | end of file (`max(44, size)`) (`auriga_stream.py:54-57`) |
+| input FIFO | text lines `tap|down|move|up X Y` | written per client event (`auriga_stream.py:289-298`) |
 
 Only `audio-media.wav` is streamed. `audio-guidance.wav` and `audio-system.wav`
 are written by the head unit and read by nothing.
@@ -44,7 +44,7 @@ Tail loops poll file size every 8 ms. Video bytes are split on
 prepended to the next VCL NAL; one VCL NAL produces one message, so a frame is
 flushed when the following NAL arrives (one-frame latency). Audio bytes are
 aligned to 4 bytes (one stereo s16 sample) and split into 7680-byte chunks;
-`AUDIO_CHUNK = 7680` is 40 ms at 48 kHz/2 ch/16-bit (`auriga_stream.py:26,330-339`).
+`AUDIO_CHUNK = 7680` is 40 ms at 48 kHz/2 ch/16-bit (`auriga_stream.py:28,251-256`).
 
 ### Session change on truncation
 
@@ -54,8 +54,8 @@ session:
 
 | File | Reaction |
 | --- | --- |
-| `video.h264` | close, broadcast `{"type":"reset"}`, re-extract SPS/PPS, offset 0, clear the GOP, broadcast a fresh `hello`, sleep 100 ms (`auriga_stream.py:218-238`) |
-| `audio-media.wav` | reopen at byte 44 silently; no message, no client notification (`auriga_stream.py:316-324`) |
+| `video.h264` | close, broadcast `{"type":"reset"}`, re-extract SPS/PPS, offset 0, clear the GOP, broadcast a fresh `hello`, sleep 100 ms (`auriga_stream.py:135-155`) |
+| `audio-media.wav` | reopen at byte 44 silently; no message, no client notification (`auriga_stream.py:233-241`) |
 | `input.jsonl` | never read |
 
 ### Startup and late clients
@@ -64,7 +64,7 @@ Video seeks to the last IDR before the first read, so a fresh server replays the
 tail of an existing file before any new data arrives. Audio starts at the current
 end of file. A client that connects later gets `hello`, then every cached message
 since the last keyframe (`self.gop`), then joins the broadcast set
-(`auriga_stream.py:343-356`). The cache is capped at `max_gop = 100000`
+(`auriga_stream.py:260-273`). The cache is capped at `max_gop = 100000`
 messages and then cleared, which is unreachable at the measured ~1800-frame GOP.
 
 ## Wire protocol
@@ -97,7 +97,7 @@ Server to client, binary. Header is 9 bytes, `struct.pack(">BQ", type, ts_us)`:
 An AVCC sample is the concatenation of `u32 big-endian length + NAL` for every
 NAL in the access unit. The avcC `description` is
 `01 <SPS[1..3]> FF E1 <u16 len> <SPS> 01 <u16 len> <PPS>`: `FF` declares 4-byte
-NAL lengths and `E1` declares one SPS (`auriga_stream.py:78-86`).
+NAL lengths and `E1` declares one SPS (`stream/lib/h264.py:67-76`).
 
 Client to server, text (JSON):
 
@@ -111,7 +111,7 @@ Unknown types and non-integer coordinates are dropped. Each event opens a fresh
 ## Timestamps
 
 `ts_us` is `time.monotonic() - t0` for the server process, sampled when the bytes
-are read (`auriga_stream.py:153-154`). It is not the AA presentation time and it
+are read (`auriga_stream.py:70-71`). It is not the AA presentation time and it
 restarts at 0 for every server run. A poll that returns a backlog assigns
 near-identical timestamps to chunks that each span 40 ms.
 
@@ -147,7 +147,7 @@ Cause: video starts at the last IDR (up to 8 MiB / ~80 s back) while audio start
 at EOF.
 Workaround: wait for the next keyframe, or restart the server after a fresh AA
 session.
-Location: `auriga_stream.py:135-140`.
+Location: `auriga_stream.py:53-57`.
 
 ### One stalled client freezes every view
 
@@ -157,7 +157,7 @@ Cause: `flush_frame` holds `self.lock` and awaits `ws.send` sequentially per
 client; a full TCP window blocks the video and audio loops.
 Workaround: keep one tab; close backgrounded tabs. The page opens one socket per
 tab, and the server broadcasts to all of them.
-Location: `auriga_stream.py:156-166,290-299,347-356`.
+Location: `auriga_stream.py:73-83,202-216,260-273`.
 
 ### Joining mid-GOP decodes a broken picture
 
@@ -165,14 +165,14 @@ Symptom: a new tab shows smeared or blocky video until the next IDR (~60 s).
 Cause: the cached GOP is pushed as one burst; the page drops deltas once
 `decodeQueueSize > 200` and there is no keyframe request.
 Workaround: reload after the next IDR.
-Location: `auriga_stream.py:347-356`, `stream/web/app.js:109`.
+Location: `auriga_stream.py:260-273`, `stream/web/app.js:109`.
 
 ### Audio timestamps cluster and overlap
 
 Symptom: several PCM chunks start at the same instant after a read backlog.
 Cause: read-time timestamps sampled per chunk in one loop iteration.
 Workaround: none in the client; reload to re-anchor.
-Location: `auriga_stream.py:334-339`, `stream/web/app.js:154`.
+Location: `auriga_stream.py:251-256`, `stream/web/app.js:154`.
 
 ### Restarting the server silences audio
 
@@ -201,7 +201,7 @@ Cause: truncation is detected by comparing file size with the read offset once
 per 8 ms poll; a session that truncates and regrows past the old offset between
 polls is not seen.
 Workaround: restart the stream server after the session change.
-Location: `auriga_stream.py:218,240-244`.
+Location: `auriga_stream.py:135,157-161`.
 
 ### Lost input is silent
 
@@ -210,7 +210,7 @@ Cause: a FIFO write failure (`ENXIO` with no reader, `ENOENT` after cleanup) is
 printed in the server log only.
 Workaround: check the server log; keep `autoapp` running and the FIFO writer
 attached.
-Location: `auriga_stream.py:373-381`.
+Location: `auriga_stream.py:289-298`.
 
 ### The page ignores `--ws-port`
 
@@ -224,7 +224,7 @@ Location: `stream/web/app.js:29`.
 Symptom: any local page can push a multi-gigabyte text frame or flood input.
 Cause: `max_size=None` on the WebSocket server and no rate limiting.
 Workaround: loopback binding is the only boundary; do not expose the port.
-Location: `auriga_stream.py:357-381,417`.
+Location: `auriga_stream.py:274-298,334`.
 
 ## Consumer contract
 

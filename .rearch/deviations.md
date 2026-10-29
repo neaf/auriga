@@ -44,3 +44,21 @@
   - `videoInfo.galaxy`/`.active` are invalid (zero width, height, SPS, PPS, tag);
     `btapp.db.galaxy-fresh` is 33 B, gitignored/untracked, current but
     `unverified`.
+
+- **P2: package marker and doc updates not in the touch list.** `stream/lib/`
+  needs `stream/lib/__init__.py` to import as a package from
+  `stream/auriga_stream.py` and from `tests/`; it is added. Moving
+  `split_nals`/`extract_sps_pps`/`build_avcc`/`find_last_idr` into
+  `stream/lib/h264.py` invalidated every `auriga_stream.py:<line>` code location
+  in `docs/Stream protocol.md`; repointed those to `stream/lib/h264.py` or the
+  shifted `auriga_stream.py` lines. `docs/Build.md` gains
+  `python -m unittest discover -s tests -v` and loses the "no automated test
+  suite" sentence. The `AUDIO_CHUNK` comment is corrected 20 ms -> 40 ms (audit
+  D1); no code change.
+
+- **P2: `stream/server.py` had no creating phase.** P3 and P4 both list
+  `stream/server.py` as an existing file, but no phase ever splits it out of
+  `stream/auriga_stream.py`. Change: P3 now also moves `Streamer`/`serve_http`
+  into `stream/server.py` and leaves `auriga_stream.py` as the CLI, plus the
+  `tests/test_session.py` follower coverage. P4 gains `tests/test_clock.py` and
+  `tests/test_h264.py` for the code it changes.
