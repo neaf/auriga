@@ -3,8 +3,8 @@
 Project: Android Auto head unit + capture rig (OpenAuto on macOS, AutoLink dongle relay, local H.264/PCM stream).
 Branch: rearch/2026-10-29
 Base tag: rearch-base (bfd7903)
-Stage: 5 (phase execution)
-Phase: 7 of 7 (build from patches), not started
+Stage: 6 (final cleanup)
+Phase: all 7 code phases done
 
 ## Done
 - Stage 0 setup. `d3f7c7d`
@@ -18,6 +18,7 @@ Phase: 7 of 7 (build from patches), not started
 - Phase 4 single-viewer stream + browser: 92 tests, builds green. `1a345c5`
 - Phase 5 head-unit fixes: 94 tests, 5 patches reproduce the tree. `88b1f50`
 - Phase 6 runtime consolidation: 94 tests, `auriga.sh` start/stop/status. `942db4e`
+- Phase 7 build from patches: 94 tests, 7 patches reproduce both trees. `a044678`
 
 ## Decisions
 - 2026-10-29: treat M1-M8 as passing at baseline; user call ("assume everything works").
@@ -35,14 +36,12 @@ Phase: 7 of 7 (build from patches), not started
 - 2026-10-29 Q10: add a one-command patch-apply + build script.
 - 2026-10-29: keep rename to Auriga; drop the USB-hub-error retry path.
 - 2026-10-29: architecture and 7-phase plan approved as written.
-- 2026-10-29: P1-P5 deviations in `.rearch/deviations.md`.
+- 2026-10-29: P1-P7 deviations in `.rearch/deviations.md`.
 - 2026-10-29: manual checks after phases are treated as pass under the baseline
   assumption unless the user asks to run them.
-- 2026-10-29: P6 deviations: pair-level refusal, year-long FIFO writer,
-  cmdline-checked stop, port preflight, no live start/stop cycle.
 
 ## Next prompt
 ```
 Use the rearchitect skill. Continue from .rearch/STATE.md.
-Next: Phase 7 (build from patches).
+Next: Stage 6 (final cleanup).
 ```
