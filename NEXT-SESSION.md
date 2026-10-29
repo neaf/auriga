@@ -69,6 +69,8 @@ Full commands are in [`MAC-PORT.md`](MAC-PORT.md). Key points:
 ## Important files
 
 - `README.md` — project state, quick start.
+- `AGENTS.md` — usage instructions for agents running/integrating this rig.
+- `DEVELOPING.md` — package build, patch and internal-change instructions.
 - `MAC-PORT.md` — exact macOS build/run path, fixes and status.
 - `RUNBOOK.md` — operational steps, BT recovery, streaming, Mac local mode.
 - `openauto-plan.md` — full build/run/patch history on the Pi.

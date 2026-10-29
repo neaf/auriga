@@ -345,12 +345,21 @@ certificate.
 - `aasdk-upstream/` — upstream `opencardev/aasdk` newdev clone for comparison.
 - `openauto-plan.md` — full OpenAuto build/run/patch plan and open questions.
 - `MAC-PORT.md` — macOS port plan (dongle direct to Mac, no Pi).
+- `AGENTS.md` — usage instructions for agents running this head unit and
+  consuming its stream.
+- `DEVELOPING.md` — package build, patch, and internal-change instructions.
 - `PHONE-APP.md` — phone-side AA mega app, Spotify, and Pi CAN/Spotify car
   server design note (not implemented).
 - `patches/openauto-capture.patch` — file-sink/video/audio/input patch applied
   to OpenAuto on the Pi.
 - `patches/openauto-macos.patch` — macOS build fixes (Bluetooth lister,
   AirPlay/TCP-5000 conflict in capture mode).
+- `patches/aasdk-usb-filter.patch` — restrict AOA switching to the AutoLink
+  dongle.
+- `patches/openauto-auriga-usb-filter.patch` — pass the dongle VID/PID and
+  skip the all-device enumerator in capture mode.
+- `patches/openauto-auriga-gps-guard.patch` — guard `gps_read()` when GPSD is
+  unavailable.
 - `openauto-config/` — `openauto.ini`, `openauto-logs.ini`, `run.sh` (Pi),
   `run-mac.sh` (macOS).
 - `stream/` — Pi WebSocket server + Brave/Chrome client for live video/audio
