@@ -31,15 +31,12 @@ display/input client.
 
 ## Run
 
-The normal way is the launch scripts:
+The normal way is the launch script:
 
 ```bash
-# macOS head unit, dongle on the Mac (no Pi/tunnel)
-./scripts/mac-headunit-start.sh
-
-# Pi head unit + Mac remote UI
-~/auriga/scripts/pi-start.sh   # on the Pi
-./scripts/mac-start.sh         # tunnels 8080/8081
+./scripts/auriga.sh start    # autoapp + stream server, waits for 8080
+./scripts/auriga.sh status
+./scripts/auriga.sh stop
 ```
 
 Or manually, on the host running OpenAuto:
@@ -53,12 +50,6 @@ The server follows `<capture-dir>/current`, so it needs the capture directory,
 not the two file paths. It listens on `127.0.0.1:8080` (HTTP) and
 `127.0.0.1:8081` (WebSocket) only. Open `http://localhost:8080` in Brave (or
 Chrome). `localhost` is a secure context, which WebCodecs requires.
-
-From a remote Mac (Pi setup), tunnel both ports:
-
-```bash
-ssh -N -L 8080:127.0.0.1:8080 -L 8081:127.0.0.1:8081 pi@auriga-pi.local
-```
 
 - Audio starts **muted**; click the small 🔇 button to create/resume the
   AudioContext.

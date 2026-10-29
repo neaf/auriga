@@ -98,29 +98,18 @@ video, audio and input streams and later forwarding them to a real head unit.
 
 ## Quick start
 
-macOS head unit (dongle direct to the Mac, no Pi):
+macOS head unit (dongle direct to the Mac):
 
 ```bash
 cd /Users/tomaszwerbicki/dev/auriga
-./scripts/mac-headunit-start.sh
+./scripts/auriga.sh start     # waits for 127.0.0.1:8080, opens Brave
+./scripts/auriga.sh status
+./scripts/auriga.sh stop
 ```
 
 Then open `http://localhost:8080` (Brave/Chrome), click the small 🔇 to enable
-audio, and tap the canvas to drive AA. Stop with
-`./scripts/mac-headunit-stop.sh`.
-
-Pi head unit (fallback) with the Mac as remote UI:
-
-```bash
-# on the Pi
-~/auriga/scripts/pi-start.sh
-# on the Mac
-cd /Users/tomaszwerbicki/dev/auriga
-./scripts/mac-start.sh
-```
-
-Then open `http://localhost:8080` and click the 🔇 to enable audio. Stop with
-`scripts/mac-stop.sh` and `~/auriga/scripts/pi-stop.sh`.
+audio, and tap the canvas to drive AA. `start` refuses a second pair while one
+holds the capture dir's lock file.
 
 Full setup, pairing recovery, rebuild steps and known issues are in
 [`RUNBOOK.md`](RUNBOOK.md). The remote UI protocol is documented in
@@ -360,15 +349,14 @@ certificate.
   skip the all-device enumerator in capture mode.
 - `patches/openauto-auriga-gps-guard.patch` — guard `gps_read()` when GPSD is
   unavailable.
-- `openauto-config/` — `openauto.ini`, `openauto-logs.ini`, `run.sh` (Pi),
-  `run-mac.sh` (macOS).
+- `openauto-config/` — `openauto.ini`, `openauto-logs.ini`, `run.sh` (the
+  macOS wrapper `scripts/auriga.sh` execs).
 - `stream/` — Pi WebSocket server + Brave/Chrome client for live video/audio
   and taps.
 - `captures/` — captured H.264/WAV/JSONL samples and extracted frames.
 - `logs/` — filtered OpenAuto run logs.
-- `scripts/aa-tap.sh` — send a tap to the live capture from the Mac.
-- `scripts/mac-headunit-start.sh`, `mac-headunit-stop.sh` — local macOS head
-  unit (no Pi); `mac-start.sh`, `mac-stop.sh` are the Pi remote-UI tunnel.
+- `scripts/auriga.sh` — start/stop/status for the macOS head unit (lock file,
+  readiness poll).
 - `aasdk/`, `build-aasdk/` — aasdk source/build on the Pi (not in this repo).
 - `scripts/aoa_probe.py` — standalone AOA switch/read.
 - `scripts/aoa_read.py` — passive bulk-IN reader.

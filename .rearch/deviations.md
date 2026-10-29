@@ -183,3 +183,41 @@
   `MAC-PORT.md`, `RUNBOOK.md` and `DEVELOPING.md` still say the AA display name
   is `Crankshaft-NG` and the rename is outstanding. Those files are folded or
   deleted by P6/Stage 6; editing them now would only be churn.
+
+- **P6: `start` refuses the pair, not one component.** FR-RUN-02 described a
+  per-component `pgrep` skip. NFR-08 and `architecture.md#Interfaces` require one
+  `autoapp`/stream pair per capture dir, and half a pair is useless. `start`
+  checks both first and exits 0 with the `status` block when either is alive,
+  instead of starting the missing one. The single-instance check is
+  `<capture-dir>/.auriga.lock` (`role pid` lines, cmdline-verified); `pgrep` is
+  only the fallback that finds a pair started before the lock existed.
+
+- **P6: FIFO writer sleeps a year.** The old wrappers parked `sleep 86400`,
+  which silently disabled touch after 24 h (audit B7). `auriga.sh` parks
+  `sleep 31536000`: same single-writer mechanism, no expiry in a realistic run.
+  The FIFO is created by `auriga.sh`; `openauto-config/run.sh` only opens it, so
+  `AURIGA_CAPTURE_DIR` and `AURIGA_INPUT_FIFO` are defaulted once (audit B4/B5).
+
+- **P6: `stop` is cmdline-checked and port preflight is new.** `stop` SIGTERMs a
+  lock pid only while `ps -p <pid> -o command=` still names `autoapp` or
+  `auriga_stream.py` (audit B6), waits up to 10 s for the SIGTERM/`App::stop()`
+  path, then SIGKILLs, then runs the `pkill` orphan fallback and removes the
+  FIFO. `start` refuses when 8080/8081 are already bound and reports a stream
+  server that dies during startup with its log tail (audit B1/X2) instead of
+  printing "started".
+
+- **P6: docs outside the phase list.** Deleting the six start/stop scripts,
+  `aa-tap.sh` and `run-mac.sh` invalidated instructions in `README.md`,
+  `DEVELOPING.md`, `stream/README.md`, `docs/Build.md` and
+  `docs/Android Auto head unit.md`; all are repointed at `scripts/auriga.sh` and
+  the Pi/tunnel sections are gone. `docs/Android Auto head unit.md` gains the
+  `## Runtime` section (lock, readiness, single env source). `MAC-PORT.md`,
+  `RUNBOOK.md`, `NEXT-SESSION.md` and `openauto-plan.md` keep the old script
+  names in their 2026-10-28 history; Stage 6 deletes them.
+
+- **P6: no start/stop cycle run in-phase.** A live pair (autoapp 29079, stream
+  29090) held the dongle for the whole phase, so `start` was exercised only on
+  its refuse path and `stop` was not run at all. Ran: `bash -n`, `py_compile`,
+  `unittest` (94), both builds, `status` against the live pair, `start`
+  refusal, `usage` exit 2, and the `run.sh` missing-env guard. The
+  `start`→`status`→`stop` cycle is M7, run when the dongle is free.

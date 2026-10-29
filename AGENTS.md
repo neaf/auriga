@@ -14,20 +14,20 @@ Prerequisites: dongle in MTP (`2717:ff40`), phone BT + Wi-Fi on and associated
 with `AutoLink-A512`, Brave installed.
 
 ```bash
-./scripts/mac-headunit-start.sh
+./scripts/auriga.sh start
+./scripts/auriga.sh status
+./scripts/auriga.sh stop
 ```
+
+`start` brings up `autoapp` (offscreen capture), the local stream server,
+`caffeinate`, waits for `127.0.0.1:8080`, then opens Brave. `status` reports the
+pids, both ports and the current session. One pair per capture directory: a lock
+file in the capture dir makes a second `start` refuse instead of starting a
+duplicate.
 
 Then open `http://localhost:8080` in Brave. The page auto-connects to
 `ws://127.0.0.1:8081`; audio starts muted, click the small 🔇 button to enable
-it. Stop with:
-
-```bash
-./scripts/mac-headunit-stop.sh
-```
-
-The start script brings up `autoapp` (offscreen capture), the local stream
-server, `caffeinate`, and opens Brave. It refuses to start a second copy if
-`autoapp` or the stream server is already running.
+it.
 
 The Galaxy S25 can stay on the Mac's USB for `adb` while AA runs. The script
 only AOA-switches the dongle; the phone should remain in MTP+ADB
@@ -40,22 +40,13 @@ only AOA-switches the dongle; the phone should remain in MTP+ADB
 | Browser UI | `http://127.0.0.1:8080` | Live AA mirror + touch input |
 | WebSocket | `ws://127.0.0.1:8081` | H.264/PCM stream + input |
 | Captures | `captures-mac/current/` | one `session-<id>/` per AA session with `video.h264`, `audio-*.wav`, `input.jsonl`, `manifest.json` |
-| Input FIFO | `/tmp/auriga-in` | `tap X Y`, `down X Y`, `move X Y`, `up X Y`, `quit` |
+| Input FIFO | `/tmp/auriga-in` (`$AURIGA_INPUT_FIFO`) | `tap X Y`, `down X Y`, `move X Y`, `up X Y`, `quit` |
 | Logs | `logs/openauto-mac-*.log`, `logs/stream-mac-*.log` | Runtime diagnostics |
-
-Pi fallback (head unit on the Pi, Brave on the Mac):
-
-```bash
-# on the Pi
-~/auriga/scripts/pi-start.sh
-# on the Mac
-./scripts/mac-start.sh
-```
 
 ## Verify it is working
 
 ```bash
-pgrep -fl "autoapp|auriga_stream"
+./scripts/auriga.sh status
 ioreg -p IOUSB -l -w 0 | grep -E 'o (AutoLink|SAMSUNG_Android)@|"idProduct" = (26720|11520|11521|65344)'
 adb devices -l
 adb -s RFGL329J04J shell svc usb getFunctions   # expect: mtp
@@ -93,7 +84,8 @@ If an emulator is attached, always target the phone explicitly:
 ## Interacting with the live head unit
 
 - **Touch:** tap/drag the Brave canvas, or write to the FIFO:
-  `echo 'tap 640 360' > /tmp/auriga-in`. Coordinates are in 1280x720 space.
+  `echo 'tap 640 360' > /tmp/auriga-in` (or `$AURIGA_INPUT_FIFO`). Coordinates
+  are in 1280x720 space.
 - **Audio:** muted until the 🔇 button is clicked; it is 48 kHz/16-bit stereo.
 - **New clients:** the stream server replays its cached GOP (the most recent
   H.264 IDR plus the following deltas, bounded), so a late client can start
@@ -152,7 +144,6 @@ behavior.
 - Do not run `mtp-delfile` or restore dongle config/DB files without explicit
   permission. The `dongle-backup/` README has the rules; the 207-byte DBs are
   stale and must not be restored with the current phone.
-- Do not kill the Pi stack (`scripts/pi-stop.sh`) unless asked.
 - Do not expose the stream server beyond localhost.
 - Do not commit `captures-mac/`, `logs/`, `.venv/`, `.serena/`, or any dongle
   credential DB.
@@ -166,3 +157,10 @@ Building, patching, and changing the USB filter/GPS guard: see
 [`DEVELOPING.md`](DEVELOPING.md). The short version: `openauto/` and
 `aasdk-upstream/` are separate git clones and `patches/` is the source of
 truth; don't edit build outputs.
+
+## Docs
+
+[`docs/Android Auto head unit.md`](docs/Android%20Auto%20head%20unit.md),
+[`docs/Stream protocol.md`](docs/Stream%20protocol.md),
+[`docs/AutoLink A512 dongle.md`](docs/AutoLink%20A512%20dongle.md),
+[`docs/Build.md`](docs/Build.md).

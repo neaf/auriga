@@ -111,9 +111,9 @@ Before reporting a package change as done:
 cmake --build build-aasdk-mac --target aasdk -j8
 cmake --build build-openauto-mac --target autoapp -j8
 
-./scripts/mac-headunit-stop.sh
-./scripts/mac-headunit-start.sh
-sleep 10
+./scripts/auriga.sh stop
+./scripts/auriga.sh start
+./scripts/auriga.sh status
 
 pgrep -fl "autoapp|auriga_stream"
 adb -s RFGL329J04J shell svc usb getFunctions   # expect: mtp

@@ -226,7 +226,8 @@ The device starts only after the phone sends `KeyBindingRequest`
 earlier FIFO lines are never read. The 80 ms `tap` sleep runs on the single
 reader thread, so `down`/`move`/`up` behind a tap wait for it
 (`AurigaInputDevice.cpp:165-175`). The FIFO needs a live writer or `read()`
-returns EOF and the reader exits; the run scripts park `sleep 86400` on it.
+returns EOF and the reader exits; `scripts/auriga.sh` parks one long-lived
+`sleep` on it.
 
 ### Configuration that capture mode honours
 
@@ -358,12 +359,39 @@ constants (`aasdk-upstream/src/Messenger/Cryptor.cpp:253,273`; the same JVC
 Kenwood certificate is installed from `aasdk-upstream/cert/headunit.crt|key` by
 aasdk's CMake). aasdk never inspects or logs the peer certificate.
 
+## Runtime
+
+`scripts/auriga.sh {start|stop|status}` is the only runtime entry point.
+`openauto-config/run.sh` only execs `autoapp` with the environment it is handed.
+
+| Verb | Effect |
+| --- | --- |
+| `start` | creates the FIFO and its writer, starts `autoapp` (offscreen capture), starts the stream server, starts `caffeinate`, polls `127.0.0.1:8080` until it listens, writes the lock, opens the browser |
+| `status` | pids of `autoapp` and the stream server, both listening ports, the `current` session; exits non-zero unless both run |
+| `stop` | SIGTERM to the pids in the lock (cmdline-checked), waits, SIGKILLs, `pkill` for orphans, removes the FIFO and the lock |
+
+- The lock is `<capture-dir>/.auriga.lock`, one `role pid` line per component.
+  `start` refuses while a live pid is in it, and refuses a running `autoapp` of
+  the same build. That is the one-pair-per-capture-dir guarantee; `pgrep` is
+  only a fallback for orphans left by a lost lock file.
+- `AURIGA_CAPTURE_DIR` (default `<repo>/captures-mac`) and
+  `AURIGA_INPUT_FIFO` (default `/tmp/auriga-in`) are resolved once in
+  `scripts/auriga.sh` and exported. `openauto-config/run.sh` has no defaults and
+  fails without them, so the FIFO the browser writes and the FIFO `autoapp`
+  reads cannot diverge.
+- Readiness is a poll of the 8080 listen socket (`nc -z`, 20 s,
+  `AURIGA_READY_TIMEOUT`). A stream server that dies, for example on
+  `EADDRINUSE`, is reported with its log tail instead of a "started" banner.
+- The FIFO writer is one long-lived `sleep` holding the write side open; EOF
+  would stop the input reader for the rest of the run.
+
 ## Verification
 
 ```bash
 cmake --build build-aasdk-mac --target aasdk -j8
 cmake --build build-openauto-mac --target autoapp -j8
-./scripts/mac-headunit-start.sh
+./scripts/auriga.sh start
+./scripts/auriga.sh status
 pgrep -fl "autoapp|auriga_stream"
 adb -s RFGL329J04J shell svc usb getFunctions          # expect: mtp
 ioreg -p IOUSB -l -w 0 | grep -E 'o (AutoLink|SAMSUNG_Android)@|"idProduct" = (26720|11520|11521|65344)'

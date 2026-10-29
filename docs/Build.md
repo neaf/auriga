@@ -204,8 +204,7 @@ Location: `aasdk-upstream/include/aasdk/Version.hpp`,
 ```
 
 The start script prefers `$AURIGA_PYTHON`, then `.venv/bin/python`, then bare
-`python3`; it exits if `websockets` cannot be imported
-(`scripts/mac-headunit-start.sh:14-26`).
+`python3`; it exits if `websockets` cannot be imported (`scripts/auriga.sh`).
 
 ## Verification
 
