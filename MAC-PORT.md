@@ -46,6 +46,18 @@ The macOS port builds, runs and projects:
 - Artifacts: `captures/2026-10-28-macos-session2-video.h264`,
   `...-audio-media.wav`, `...-input.jsonl`, and two extracted frames.
 
+**Development phone on USB (2026-10-29):** `autoapp` now restricts the AOA
+switch to the AutoLink dongle (`2717:ff40`), so a Galaxy S25 can stay plugged
+into the Mac for `adb` and remains in MTP+ADB (`04e8:6860`) instead of being
+switched to `18d1:2d01`. Capture mode also skips
+`ConnectedAccessoriesEnumerator`, which used to run the AOA query chain against
+every USB device. Verified with the phone on USB: phone stayed `mtp`, `adb`
+stayed connected, and AA projected normally through the dongle.
+
+The `SensorService` GPS poll is now guarded by `gpsEnabled_`; without GPSD,
+`gps_read()` on an unopened context crashed `autoapp` intermittently (same
+stack in the 2026-10-28 and 2026-10-29 crash reports).
+
 Dongle recovery on macOS: the first AA entity can fail with `AASDK Error 10`,
 native 2, if it starts before the phone has associated with `AutoLink-A512`.
 In that state the dongle stays in AOA and OpenAuto waits for a new USB device;
@@ -133,6 +145,16 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Darwin" AND TARGET absl::base)
 endif()
 ```
 
+Apply the AutoLink USB filter:
+
+```bash
+git -C aasdk-upstream apply /path/to/auriga/patches/aasdk-usb-filter.patch
+```
+
+It adds optional accessory-source VID/PID arguments to `USBHub`; with no
+arguments the old any-device behaviour is preserved. OpenAuto passes
+`2717:ff40`, so phones and other USB devices are never sent the AOA switch.
+
 Configure/build:
 
 ```bash
@@ -169,10 +191,15 @@ git clone https://github.com/opencardev/openauto.git openauto
 git -C openauto checkout 4cc739b8
 git -C openauto apply /path/to/auriga/patches/openauto-capture.patch
 git -C openauto apply /path/to/auriga/patches/openauto-macos.patch
+git -C openauto apply /path/to/auriga/patches/openauto-auriga-usb-filter.patch
+git -C openauto apply /path/to/auriga/patches/openauto-auriga-gps-guard.patch
 ```
 
 `openauto-macos.patch` contains the two source fixes described in Status:
 the missing macOS Bluetooth lister and the AirPlay/TCP-5000 conflict.
+`openauto-auriga-usb-filter.patch` passes `2717:ff40` to `USBHub` and skips the
+all-device AOA enumerator in capture mode. `openauto-auriga-gps-guard.patch`
+prevents the GPS poll from calling `gps_read()` without a GPSD connection.
 
 Configure. The important bits:
 

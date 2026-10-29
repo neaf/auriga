@@ -1,6 +1,6 @@
 # Auriga next-session handoff
 
-## Current state (2026-10-28, macOS port)
+## Current state (2026-10-29, macOS port)
 
 **Working:**
 
@@ -18,6 +18,10 @@
 - macOS local run/stop: `scripts/mac-headunit-start.sh`,
   `mac-headunit-stop.sh`. Capture dir `captures-mac/`; stream server runs on
   localhost (no Pi, hub, or SSH tunnel).
+- **Development phone on USB works**: aasdk `USBHub` only AOA-switches the
+  dongle (`2717:ff40`), so the Galaxy S25 stays in MTP+ADB for `adb` while AA
+  runs. The all-device AOA enumerator is skipped in capture mode. `SensorService`
+  also guards `gps_read()` when GPSD is absent, fixing an intermittent crash.
 
 **Recovery caveat on macOS:** if the first AA entity fails before the phone is
 associated, the dongle stays in AOA and `autoapp` waits at
@@ -27,6 +31,10 @@ associated, the normal first-session reset reconnects automatically.
 
 **Next:** long-run stability on macOS, per-session capture filenames, and the
 headless emulator work. No physical dongle test remains blocking.
+
+**Design branch (not implemented):** phone-side AA mega app + Pi CAN/Spotify
+server — see [`PHONE-APP.md`](PHONE-APP.md). First experiment: AARE + dongle +
+OpenAuto, to confirm the dongle accepts the phone app's TLS certificate.
 
 **Minimal app status: rejected for now.** It completes AA 1.7/TLS/service
 discovery and captures real video, but resets every session and does not
@@ -39,11 +47,13 @@ Full commands are in [`MAC-PORT.md`](MAC-PORT.md). Key points:
 
 - `brew install boost@1.85 qt@5 taglib rtaudio util-linux gpsd protobuf abseil
   libusb openssl@3 pkg-config`; Boost 1.85 is mandatory (`io_service`).
-- aasdk: `aasdk-upstream` + `AASDK_MINOR = 7`; build dir `build-aasdk-mac`;
-  force `Boost_DIR` to 1.85 (`'-UBoost_.*'` when reconfiguring a cached tree).
-- OpenAuto: `4cc739b8`, apply `patches/openauto-capture.patch` and
-  `patches/openauto-macos.patch`; configure with the extra absl/taglib/gps
-  includes and OpenSSL link flags from MAC-PORT.
+- aasdk: `aasdk-upstream` + `AASDK_MINOR = 7` + `patches/aasdk-usb-filter.patch`;
+  build dir `build-aasdk-mac`; force `Boost_DIR` to 1.85 (`'-UBoost_.*'` when
+  reconfiguring a cached tree).
+- OpenAuto: `4cc739b8`, apply `patches/openauto-capture.patch`,
+  `patches/openauto-macos.patch`, `patches/openauto-auriga-usb-filter.patch`
+  and `patches/openauto-auriga-gps-guard.patch`; configure with the extra
+  absl/taglib/gps includes and OpenSSL link flags from MAC-PORT.
 - Python: `.venv/bin/python` with `websockets` (repo-local venv).
 
 ## Useful values
@@ -66,6 +76,11 @@ Full commands are in [`MAC-PORT.md`](MAC-PORT.md). Key points:
 - `patches/openauto-capture.patch` — file sinks applied to OpenAuto.
 - `patches/openauto-macos.patch` — macOS Bluetooth lister + AirPlay/TCP-5000
   fixes.
+- `patches/aasdk-usb-filter.patch` — restrict AOA switching to `2717:ff40`.
+- `patches/openauto-auriga-usb-filter.patch` — pass the dongle VID/PID and
+  skip the all-device enumerator in capture mode.
+- `patches/openauto-auriga-gps-guard.patch` — guard `gps_read()` when GPSD is
+  unavailable.
 - `openauto-config/` — config, `run.sh` (Pi), `run-mac.sh` (macOS).
 - `scripts/` — Pi/Mac start-stop, `aa-tap.sh`.
 - `dongle-backup/` — BT DB backups/restore rules.

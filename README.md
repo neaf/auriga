@@ -55,7 +55,10 @@ video, audio and input streams and later forwarding them to a real head unit.
 - aasdk 1.7 (`newdev` + `AASDK_MINOR = 7`) builds static for macOS with
   Boost 1.85: `build-aasdk-mac/lib/libaasdk.a` and `libaap_protobuf.a`.
 - OpenAuto `4cc739b8` + `patches/openauto-capture.patch` +
-  `patches/openauto-macos.patch` builds `build-openauto-mac/bin/autoapp`.
+  `patches/openauto-macos.patch` + `patches/openauto-auriga-usb-filter.patch` +
+  `patches/openauto-auriga-gps-guard.patch` builds
+  `build-openauto-mac/bin/autoapp`; aasdk also gets
+  `patches/aasdk-usb-filter.patch`.
 - With the dongle direct to the Mac, the dongle switched MTP `2717:ff40` ->
   AOA `18d1:2d00`, completed AA 1.7/TLS/service discovery, and projected a full
   1280x720 AA UI (Google Maps + Spotify) with 48 kHz stereo media audio.
@@ -64,6 +67,9 @@ video, audio and input streams and later forwarding them to a real head unit.
   UI), and a WebSocket client receiving keyframes/deltas/audio on localhost.
 - Run/stop: `scripts/mac-headunit-start.sh` / `mac-headunit-stop.sh`;
   captures go to `captures-mac/`; no Pi, hub or SSH tunnel.
+- The Galaxy S25 can stay on the Mac's USB for `adb` while AA runs: `autoapp`
+  only AOA-switches the dongle (`2717:ff40`), so the phone stays in MTP+ADB
+  (`04e8:6860`). Capture mode skips the all-device AOA enumerator.
 - macOS-specific fixes: Boost 1.85 (`io_service`), absl/taglib/gps include
   roots, static-aasdk OpenSSL link symbols, a broken Bluetooth lister in
   `SettingsWindow.cpp`, and OpenAuto's TCP-5000 listener conflicting with
@@ -321,6 +327,15 @@ Full OpenAuto now works as the reference/capture host. Next:
 
 Secondary: keep OpenAuto as the capture host and use the `stream/` Mac client.
 
+## Design branch: phone-side mega app + Pi car server
+
+A separate design branch (not implemented) is written up in
+[`PHONE-APP.md`](PHONE-APP.md): the phone runs the AA phone side and renders a
+fully custom UI (map, Spotify, gauges) into `MediaCodec`; the dongle stays the
+car-side bridge; a Pi in the car handles CAN/telemetry and Spotify Connect over
+USB. The first go/no-go is whether the dongle accepts the phone app's TLS
+certificate.
+
 ## File map
 
 - `capture/` — minimal headless aasdk capture app (reference; basis for the
@@ -330,6 +345,8 @@ Secondary: keep OpenAuto as the capture host and use the `stream/` Mac client.
 - `aasdk-upstream/` — upstream `opencardev/aasdk` newdev clone for comparison.
 - `openauto-plan.md` — full OpenAuto build/run/patch plan and open questions.
 - `MAC-PORT.md` — macOS port plan (dongle direct to Mac, no Pi).
+- `PHONE-APP.md` — phone-side AA mega app, Spotify, and Pi CAN/Spotify car
+  server design note (not implemented).
 - `patches/openauto-capture.patch` — file-sink/video/audio/input patch applied
   to OpenAuto on the Pi.
 - `patches/openauto-macos.patch` — macOS build fixes (Bluetooth lister,

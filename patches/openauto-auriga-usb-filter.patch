@@ -1,0 +1,42 @@
+diff --git a/src/autoapp/App.cpp b/src/autoapp/App.cpp
+--- a/src/autoapp/App.cpp
++++ b/src/autoapp/App.cpp
+@@ -52,11 +52,17 @@
+       catch (...) {
+         OPENAUTO_LOG(error) << "[App] waitForUSBDevice() -exception caused by this->waitForDevice();";
+       }
+-      try {
+-        this->enumerateDevices();
+-      }
+-      catch (...) {
+-        OPENAUTO_LOG(error) << "[App] waitForUSBDevice() exception caused by this->enumerateDevices()";
++      // The USB capture build only uses the AutoLink dongle. The enumerator
++      // runs the AOA query chain against every USB device, which switches a
++      // connected development phone into accessory mode. Skip it in capture
++      // mode so the phone stays in MTP+ADB.
++      if (!aurigaCaptureMode()) {
++        try {
++          this->enumerateDevices();
++        }
++        catch (...) {
++          OPENAUTO_LOG(error) << "[App] waitForUSBDevice() exception caused by this->enumerateDevices()";
++        }
+       }
+ 
+     });
+diff --git a/src/autoapp/autoapp.cpp b/src/autoapp/autoapp.cpp
+--- a/src/autoapp/autoapp.cpp
++++ b/src/autoapp/autoapp.cpp
+@@ -239,7 +239,11 @@
+     autoapp::service::ServiceFactory serviceFactory(ioService, configuration);
+     autoapp::service::AndroidAutoEntityFactory androidAutoEntityFactory(ioService, configuration, serviceFactory);
+ 
+-    auto usbHub(std::make_shared<aasdk::usb::USBHub>(usbWrapper, ioService, queryChainFactory));
++    // The AutoLink dongle enumerates as 2717:ff40 (Xiaomi MTP) before the AOA
++    // switch. Restrict the switch to that device so phones connected for
++    // development (MTP+ADB) are left alone.
++    auto usbHub(std::make_shared<aasdk::usb::USBHub>(usbWrapper, ioService, queryChainFactory,
++                                                    0x2717, 0xFF40));
+     auto connectedAccessoriesEnumerator(std::make_shared<aasdk::usb::ConnectedAccessoriesEnumerator>(usbWrapper, ioService, queryChainFactory));
+     auto app = std::make_shared<autoapp::App>(ioService, usbWrapper, tcpWrapper, androidAutoEntityFactory, std::move(usbHub), std::move(connectedAccessoriesEnumerator));
+ 

@@ -10,6 +10,9 @@
 # python venv for the stream server
 /.venv/
 
+# Serena tool state (local project config/cache)
+/.serena/
+
 # macOS captures (large media, local only)
 /captures-mac/
 

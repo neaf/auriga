@@ -60,6 +60,24 @@ Normal macOS session:
 4. Capture files appear in `captures-mac/`; browser taps go to
    `/tmp/auriga-in` and are logged in `captures-mac/input.jsonl`.
 
+The Galaxy S25 can stay plugged into the Mac's USB for `adb`/app development.
+`autoapp` only AOA-switches the dongle (`2717:ff40`); the phone should remain
+in MTP+ADB (`04e8:6860`), not `18d1:2d01`. If the phone shows up as
+`18d1:2d01`, it was switched by an older build or another host: run
+`adb shell svc usb setFunctions mtp` (or replug it) before starting.
+
+An Android emulator may also be attached; target the phone explicitly:
+
+```bash
+adb devices -l
+adb -s RFGL329J04J shell ...
+```
+
+The dongle LED is **not** an AA-link indicator. It lights/blinks while the
+dongle is in MTP/advertising and goes dark once `autoapp` switches it to AOA
+(`18d1:2d00`) and projection is active. A dark LED with `18d1:2d00` in
+`ioreg -p IOUSB` and a live `Version Received` log means it is working.
+
 If the first AA entity fails before the phone associates, the dongle stays in
 AOA and `autoapp` sits at `Waiting for device...`. Unplug/replug the dongle
 (cold boot to MTP) with the phone's BT/Wi-Fi on; the next AOA switch projects.

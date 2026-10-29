@@ -1,0 +1,101 @@
+diff --git a/include/aasdk/USB/USBHub.hpp b/include/aasdk/USB/USBHub.hpp
+index 1608aa2..ce16156 100644
+--- a/include/aasdk/USB/USBHub.hpp
++++ b/include/aasdk/USB/USBHub.hpp
+@@ -31,7 +31,9 @@ namespace aasdk {
+     class USBHub : public IUSBHub, public std::enable_shared_from_this<USBHub>, boost::noncopyable {
+     public:
+       USBHub(IUSBWrapper &usbWrapper, boost::asio::io_service &ioService,
+-             IAccessoryModeQueryChainFactory &queryChainFactory);
++             IAccessoryModeQueryChainFactory &queryChainFactory,
++             uint16_t accessorySourceVendorId = 0,
++             uint16_t accessorySourceProductId = 0);
+ 
+       void start(Promise::Pointer promise) override;
+ 
+@@ -45,12 +47,16 @@ namespace aasdk {
+ 
+       bool isAOAPDevice(const libusb_device_descriptor &deviceDescriptor) const;
+ 
++      bool isAccessoryModeSource(const libusb_device_descriptor &deviceDescriptor) const;
++
+       static int hotplugEventsHandler(libusb_context *usbContext, libusb_device *device, libusb_hotplug_event event,
+                                       void *uerData);
+ 
+       IUSBWrapper &usbWrapper_;
+       boost::asio::io_service::strand strand_;
+       IAccessoryModeQueryChainFactory &queryChainFactory_;
++      uint16_t accessorySourceVendorId_;
++      uint16_t accessorySourceProductId_;
+       Promise::Pointer hotplugPromise_;
+       Pointer self_;
+       HotplugCallbackHandle hotplugHandle_;
+diff --git a/src/USB/USBHub.cpp b/src/USB/USBHub.cpp
+index 71c68a2..345cd17 100644
+--- a/src/USB/USBHub.cpp
++++ b/src/USB/USBHub.cpp
+@@ -26,8 +26,11 @@ namespace aasdk {
+   namespace usb {
+ 
+     USBHub::USBHub(IUSBWrapper &usbWrapper, boost::asio::io_service &ioService,
+-                   IAccessoryModeQueryChainFactory &queryChainFactory)
+-        : usbWrapper_(usbWrapper), strand_(ioService), queryChainFactory_(queryChainFactory) {
++                   IAccessoryModeQueryChainFactory &queryChainFactory,
++                   uint16_t accessorySourceVendorId, uint16_t accessorySourceProductId)
++        : usbWrapper_(usbWrapper), strand_(ioService), queryChainFactory_(queryChainFactory),
++          accessorySourceVendorId_(accessorySourceVendorId),
++          accessorySourceProductId_(accessorySourceProductId) {
+     }
+ 
+     void USBHub::start(Promise::Pointer promise) {
+@@ -83,6 +86,17 @@ namespace aasdk {
+              (deviceDescriptor.idProduct == cAOAPId || deviceDescriptor.idProduct == cAOAPWithAdbId);
+     }
+ 
++    bool USBHub::isAccessoryModeSource(const libusb_device_descriptor &deviceDescriptor) const {
++      // No filter configured: preserve the original behaviour of trying the
++      // AOA switch on every non-AOAP device.
++      if (accessorySourceVendorId_ == 0 && accessorySourceProductId_ == 0) {
++        return true;
++      }
++
++      return deviceDescriptor.idVendor == accessorySourceVendorId_ &&
++             deviceDescriptor.idProduct == accessorySourceProductId_;
++    }
++
+     void USBHub::handleDevice(libusb_device *device) {
+       if (hotplugPromise_ == nullptr) {
+         return;
+@@ -93,6 +107,23 @@ namespace aasdk {
+         return;
+       }
+ 
++      const bool isAOAPDevice = this->isAOAPDevice(deviceDescriptor);
++
++      // When a source filter is configured, only touch that device. This keeps
++      // unrelated Android devices (for example a phone in MTP+ADB mode) out of
++      // the AOA switch.
++      if (!isAOAPDevice && !this->isAccessoryModeSource(deviceDescriptor)) {
++        return;
++      }
++
++      // AOA with ADB is a phone, not the AutoLink dongle (which enumerates as
++      // 18d1:2d00 after the switch). Do not grab it when a filter is active.
++      if (isAOAPDevice &&
++          (accessorySourceVendorId_ != 0 || accessorySourceProductId_ != 0) &&
++          deviceDescriptor.idProduct == cAOAPWithAdbId) {
++        return;
++      }
++
+       DeviceHandle handle;
+       auto openResult = usbWrapper_.open(device, handle);
+ 
+@@ -100,7 +131,7 @@ namespace aasdk {
+         return;
+       }
+ 
+-      if (this->isAOAPDevice(deviceDescriptor)) {
++      if (isAOAPDevice) {
+         hotplugPromise_->resolve(std::move(handle));
+         hotplugPromise_.reset();
+       } else {

@@ -1,0 +1,27 @@
+diff --git a/src/autoapp/Service/Sensor/SensorService.cpp b/src/autoapp/Service/Sensor/SensorService.cpp
+--- a/src/autoapp/Service/Sensor/SensorService.cpp
++++ b/src/autoapp/Service/Sensor/SensorService.cpp
+@@ -236,15 +236,19 @@
+           this->sendNightData();
+         }
+         bool gpsDataAvailable = false;
++        // gps_read() dereferences gpsData_; only call it after a successful
++        // gps_open(). Without GPSD the previous code crashed intermittently.
++        if (this->gpsEnabled_) {
+ #if GPSD_API_MAJOR_VERSION >= 7
+-        if (gps_read (&this->gpsData_, NULL, 0) != -1) {
+-          gpsDataAvailable = true;
+-        }
++          if (gps_read (&this->gpsData_, NULL, 0) != -1) {
++            gpsDataAvailable = true;
++          }
+ #else
+-        if (gps_read (&this->gpsData_) != -1) {
++          if (gps_read (&this->gpsData_) != -1) {
+                     gpsDataAvailable = true;
+                 }
+ #endif
++        }
+         if ((this->gpsEnabled_) &&
+             (gps_waiting(&this->gpsData_, 0)) &&
+             (gpsDataAvailable == true) &&
