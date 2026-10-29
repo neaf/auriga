@@ -68,23 +68,32 @@ ssh -N -L 8080:127.0.0.1:8080 -L 8081:127.0.0.1:8081 pi@auriga-pi.local
 ## Protocol
 
 - Server → client text `hello`:
-  `{type, width, height, fps, codec, description}` where `description` is
-  base64 avcC (SPS/PPS) and `codec` is e.g. `avc1.42801f`.
+  `{type, width, height, fps, codec, description}` where geometry comes from
+  the session's `manifest.json` (1280x720/30 until the head unit publishes it),
+  `description` is base64 avcC (SPS/PPS) and `codec` is e.g. `avc1.42801f`.
 - Server → client binary: `type:u8 | timestamp_us:u64 BE | payload`
   - type 1 = H.264 key frame (AVCC), type 3 = H.264 delta (AVCC),
-  - type 2 = PCM s16le 48 kHz stereo (20 ms chunks).
-- Server text `reset` when `current` moves to a new session.
+  - type 2 = PCM s16le 48 kHz stereo (40 ms chunks).
+- `ts_us` is a per-session content clock: video from the frame index, audio from
+  the sample index.
+- Server text `reset` when `current` moves to a new session, and `status`
+  (`{type:"status", text}`) for a server-side condition such as a failed FIFO
+  write.
 - Client → server text: `{type:"tap"|"down"|"move"|"up", x, y}` in 1280x720
   space; the server writes `tap X Y` etc. to `/tmp/auriga-in`.
+- Client → server text `{type:"keyframe"}` asks the server to replay its cached
+  GOP so the decoder resynchronises.
+- One viewer per session: a second tab replaces the first, which is closed with
+  WebSocket code `4001` and stops reconnecting.
 
 ## Limitations
 
 - The file sinks do not preserve AA timestamps; video/audio sync is
   best-effort (audio is anchored to its own first chunk).
 - New clients receive the cached GOP (the last keyframe plus following
-  deltas), so WebCodecs can start decoding. If the AA stream has no recent IDR,
-  the server starts at file offset 0 and catches up; memory use grows with the
-  cached GOP, so restart the streamer per session for long runs.
+  deltas), bounded to 2400 frames, so WebCodecs can start decoding. If the AA
+  stream has no recent IDR, the server starts at file offset 0 and catches up;
+  a GOP past the bound clears the cache and the page waits for the next IDR.
 - A new AA session creates a new `session-<id>` directory; the server detects
   the `current` change, clears the GOP and sends `reset`. The previous session
   stays on disk (the five newest are kept).

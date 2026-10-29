@@ -19,6 +19,11 @@ class VideoTimestampTest(unittest.TestCase):
     def test_other_fps(self):
         self.assertEqual(video_timestamp(1, fps=25), 40_000)
 
+    def test_fractional_fps(self):
+        # The head unit publishes fps in `manifest.json`; it may be fractional.
+        self.assertEqual(video_timestamp(0, fps=29.97), 0)
+        self.assertEqual(video_timestamp(30, fps=29.97), 1_001_001)
+
 
 class AudioTimestampTest(unittest.TestCase):
     def test_sample_zero(self):
@@ -60,6 +65,18 @@ class ContentClockTest(unittest.TestCase):
         self.assertEqual(clock.audio_samples, 0)
         self.assertEqual(clock.next_video(), 0)
         self.assertEqual(clock.next_audio(7680), 0)
+
+    def test_fractional_fps_is_accepted(self):
+        clock = ContentClock(fps=29.97)
+        self.assertEqual(clock.next_video(), 0)
+        self.assertEqual(clock.next_video(), 33366)
+
+    def test_a_read_backlog_keeps_timestamps_apart(self):
+        # Two chunks read in one poll must not share a timestamp: the offset is
+        # derived from the sample index, not from the read time (NFR-02).
+        clock = ContentClock()
+        timestamps = [clock.next_audio(7680) for _ in range(3)]
+        self.assertEqual(timestamps, [0, 40_000, 80_000])
 
 
 if __name__ == "__main__":

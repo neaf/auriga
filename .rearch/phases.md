@@ -157,9 +157,10 @@ Touches: `patches/openauto-capture.patch` (buffered writer + immediate ACK in
 SPS/PPS once per segment; emit width/height/fps into `manifest.json`), new
 `patches/openauto-auriga-identity.patch` (display_name/make/model → `Auriga`),
 `patches/openauto-macos.patch` (one `AURIGA_CAPTURE_DIR` read shared by `App`
-and `ServiceFactory`), `stream/server.py` (use manifest geometry in `hello`),
-`docs/Android Auto head unit.md` (ACK-before-write, codec-config separation,
-identity, geometry), `docs/Stream protocol.md` (`hello` geometry source).
+and `ServiceFactory`), `docs/Android Auto head unit.md` (ACK-before-write,
+codec-config separation, identity, geometry), `docs/Stream protocol.md` (`hello`
+geometry source). No `stream/server.py` change: P4 already reads the geometry
+from `manifest.json`.
 
 Deletes: the two independent `getenv` capture-mode definitions (one stays).
 

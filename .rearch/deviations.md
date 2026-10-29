@@ -99,3 +99,41 @@
   refactor of that file (imports from `stream/lib/h264.py`, `AUDIO_CHUNK`
   comment) was in the working tree but not in the P2 commit. P3 rewrites the file
   as the CLI, so the P2 intent lands here.
+
+- **P4: `tests/test_server.py` added.** The phase changes the viewer model
+  (single viewer, bounded queue, replay, keyframe request) and the wire
+  timestamps; none of that is reachable from the pure-lib tests P4 names. The
+  new file drives `Streamer.handle`, `video_loop` and `Viewer` on a temporary
+  capture directory with a fake socket: replacement close code, drop order,
+  unsync-on-drop, GOP replay, keyframe request, manifest geometry and
+  content-clock timestamps.
+
+- **P4: docs touched outside `docs/Stream protocol.md`.** `stream/README.md`
+  and `AGENTS.md` restate the wire protocol, so a stale copy there would
+  contradict the server: both gain the `keyframe` request, the `status` message,
+  the single-viewer rule, the manifest geometry and the `40 ms` PCM chunk size
+  (the `20 ms` text was already wrong, audit D1). Their full rewrites stay with
+  P5/P6.
+
+- **P4: replay bound and drop policy chosen.** `GOP_MAX_FRAMES = 2400` (~80 s at
+  30 fps) covers the measured ~1800-frame AA GOP; on overflow the cache is
+  cleared rather than truncated, because a mid-GOP replay does not decode. The
+  viewer queue is 240 messages and drops audio first, then the oldest video: a
+  dropped video frame marks the viewer unsynced and its deltas are skipped until
+  the next keyframe (`Viewer.synced`), instead of sending frames with no
+  reference. `self.synced` is the only state the queue adds.
+
+- **P4: `{"type":"status"}` message added.** `architecture.md#Error handling`
+  requires a FIFO failure to surface as status text when a viewer is connected;
+  the page shows it instead of failing silently (audit B10). Client-side, a
+  content-timestamp gap over 250 ms (`GAP_US`) or a decoder error triggers the
+  keyframe request, which is how a reconnecting or lagging tab resyncs.
+
+- **P4: `stream/lib/clock.py` accepts fractional fps.** `parse_manifest`
+  returns fps as a float and the head unit may publish 29.97; the server rounds
+  to an int for the clock and reports the same int in `hello`.
+
+- **P4: P5's `stream/server.py` touch is now a no-op.** P4 already takes
+  `hello` geometry from `manifest.json`; P5 keeps only the head-unit side that
+  publishes width/height/fps. `phases.md` P5 says so.
+

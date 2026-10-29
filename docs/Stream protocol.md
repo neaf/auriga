@@ -3,24 +3,30 @@
 `stream/auriga_stream.py` is the CLI; `stream/server.py` follows the head unit's
 current capture session and serves it to a browser over a local WebSocket:
 H.264 in AVCC framing, PCM s16le stereo, and a JSON control channel. It also
-serves the static client from `stream/web`.
+serves the static client from `stream/web`. Exactly one browser viewer is served
+at a time (`FR-STR-14`).
 
 ## Endpoints and process model
 
 | Endpoint | Address | Purpose |
 | --- | --- | --- |
 | HTTP | `127.0.0.1:8080` | static files from `stream/web` (`ThreadingHTTPServer`, daemon thread, request logging off) |
-| WebSocket | `127.0.0.1:8081` | `hello`, video/audio frames, `reset`, client input |
+| WebSocket | `127.0.0.1:8081` | `hello`, video/audio frames, `reset`, `status`, client input and keyframe requests |
 
-Both bind loopback only and have no authentication (`stream/server.py:374`,
+Both bind loopback only and have no authentication (`stream/server.py:495`,
 `stream/auriga_stream.py:45`). Nothing else may be exposed.
 
 One asyncio loop runs `session_loop`, `video_loop`, `audio_loop`, the WebSocket
-server and one task per connected client. `session_loop` polls the session
-pointer every 50 ms and bumps a per-stream epoch; the tail loops reopen their
-file when their epoch moves (`stream/server.py:111-149,184-199,288-297`).
-`self.lock` (`asyncio.Lock`) serializes GOP bookkeeping, broadcasts and the
-new-client `hello` + GOP send. The HTTP server is a separate daemon thread.
+server and the viewer's send task. `session_loop` polls the session pointer every
+50 ms and bumps a per-stream epoch; the tail loops reopen their file when their
+epoch moves (`stream/server.py:221-272,304-316,372-381`). The HTTP server is a
+separate daemon thread.
+
+The tail loops never send: they append to the viewer's bounded queue and return
+(`stream/server.py:64-153`). `Viewer.run` is the only task that awaits a socket,
+so a browser that stops reading costs queue depth, never capture latency
+(`NFR-02`). `self.lock` covers GOP bookkeeping only and is never held across a
+send (`stream/server.py:163,348-356,407-415`).
 
 | Argument | Default | Note |
 | --- | --- | --- |
@@ -38,50 +44,70 @@ follows the pointer instead of watching file sizes.
 
 | Input | Format | Read position |
 | --- | --- | --- |
-| `current` | relative symlink to `session-<id>` | polled every 50 ms (`stream/lib/session.py:123-135,167-214`; `stream/server.py:111-116`) |
-| `video.h264` | Annex-B H.264, 4-byte start codes (see `docs/Android Auto head unit.md`) | at startup: last type-5 NAL within the last 8 MiB, else offset 0 (`stream/lib/h264.py:79-109`; `stream/server.py:172-176`). After a session or segment change: offset 0 |
-| `audio-media.wav` | 44-byte PCM WAV header, 48 kHz, 2 ch, 16-bit | at startup: end of file (`max(44, size)`); after a change: byte 44 (`stream/server.py:278-284`) |
-| input FIFO | text lines `tap|down|move|up X Y` | written per client event (`stream/server.py:351-360`) |
+| `current` | relative symlink to `session-<id>` | polled every 50 ms (`stream/lib/session.py:123-135,167-214`; `stream/server.py:221-226`) |
+| `manifest.json` | `{session, width, height, fps, <stream>: count}` | polled with `current`; names the `hello` geometry and the segment counts (`stream/lib/session.py:104-120,138-145`; `stream/server.py:237-247`) |
+| `video.h264` | Annex-B H.264, 4-byte start codes (see `docs/Android Auto head unit.md`) | at startup: last type-5 NAL within the last 8 MiB, else offset 0 (`stream/lib/h264.py:85-115`; `stream/server.py:295-299`). After a session or segment change: offset 0 |
+| `audio-media.wav` | 44-byte PCM WAV header, 48 kHz, 2 ch, 16-bit | at startup: end of file (`max(44, size)`); after a change: byte 44 (`stream/server.py:362-370`) |
+| input FIFO | text lines `tap|down|move|up X Y` | written per client event (`stream/server.py:462-474`) |
 
 Only `audio-media.wav` is streamed. `audio-guidance.wav` and `audio-system.wav`
 are written by the head unit and read by nothing.
 
 Tail loops poll file size every 8 ms. Video bytes are split on
-`00 00 01`/`00 00 00 01`; SPS/PPS/AUD (types 7/8/9) are held in `pending` and
-prepended to the next VCL NAL; one VCL NAL produces one message, so a frame is
-flushed when the following NAL arrives (one-frame latency). Audio bytes are
-aligned to 4 bytes (one stereo s16 sample) and split into 7680-byte chunks;
-`AUDIO_CHUNK = 7680` is 40 ms at 48 kHz/2 ch/16-bit
-(`stream/server.py:24-25,313-318`).
+`00 00 01`/`00 00 00 01`; `FrameAssembler` holds SPS/PPS/AUD (types 7/8/9) back
+and prepends them to the next VCL NAL, and one VCL NAL produces one message, so a
+frame is flushed when the following NAL arrives or at the end of the read
+(one-frame latency) (`stream/lib/h264.py:118-179`; `stream/server.py:330-344`).
+Audio bytes are aligned to 4 bytes (one stereo s16 sample) and split into
+7680-byte chunks; `AUDIO_CHUNK = 7680` is 40 ms at 48 kHz/2 ch/16-bit
+(`stream/server.py:47-48,389-401`).
 
 ### Session and segment changes
 
 `current` names the session to read; `manifest.json` in that directory carries
-one segment count per stream. Both are replaced by an atomic rename on the head
-unit, so a poll never sees a half-written pointer or manifest.
+the geometry and one segment count per stream. Both are replaced by an atomic
+rename on the head unit, so a poll never sees a half-written pointer or manifest.
 
 | Event | Detection | Reaction |
 | --- | --- | --- |
-| new session | `current` resolves to a different name than the previous poll | broadcast `{"type":"reset"}`, then a fresh `hello`; reopen both files at offset 0/44; clear the GOP; re-extract SPS/PPS (`stream/server.py:130-140`) |
-| segment rollover | a stream's manifest count advanced | reopen that one file at offset 0; no `reset`; the new segment's SPS/PPS travel in-band with its first frame, so the avcC description is kept (`stream/server.py:142-149,186-199,290-297`) |
+| new session | `current` resolves to a different name than the previous poll | drop everything queued, send `{"type":"reset"}` then a fresh `hello`; reopen both files at offset 0/44; clear the GOP; re-extract SPS/PPS; restart the content clock (`stream/server.py:237-263`) |
+| segment rollover | a stream's manifest count advanced | reopen that one file at offset 0; no `reset`; the new segment's SPS/PPS travel in-band with its first frame, so the avcC description is kept (`stream/server.py:265-272,304-316,372-381`) |
 | pointer absent | `readlink` fails | nothing; the loops keep reading the last known session |
-| file shorter than the offset | only used to avoid a negative read | wait for the epoch change; no session inference from file size (`stream/server.py:210-213`) |
+| file shorter than the offset | only used to avoid a negative read | wait for the epoch change; no session inference from file size (`stream/server.py:327-329`) |
 
 A session change and a rollover are the only reasons the server reopens a file.
-A file that is truncated without a manifest update leaves the reader idle until
-the next poll, never decoding bytes at a stale offset. A new session's files
+A file that is truncated without a manifest update leaves the reader idle until the
+next poll, never decoding bytes at a stale offset. A new session's files
 appear when the AA channels open, which can be seconds after the pointer moves;
-the tail loops wait for the file instead of failing
-(`stream/server.py:153-166`).
+the tail loops wait for the file instead of failing (`stream/server.py:274-287`).
 
-### Startup and late clients
+## Viewer, replay and resynchronisation
 
-Video seeks to the last IDR before the first read, so a fresh server replays the
-tail of the current session before any new data arrives. Audio starts at the
-current end of file. A client that connects later gets `hello`, then every
-cached message since the last keyframe (`self.gop`), then joins the broadcast
-set (`stream/server.py:322-335`). The cache is capped at `max_gop = 100000`
-messages and then cleared, which is unreachable at the measured ~1800-frame GOP.
+One viewer, the most recent WebSocket connection. A second connection replaces
+the first: the old socket is closed with code `4001` (`REPLACED_CODE`,
+`stream/server.py:54,417-435`) and the page stops reconnecting on it. Each
+viewer owns a bounded queue of 240 messages (`VIEWER_QUEUE`,
+`stream/server.py:53,64-153`) drained by its own send task.
+
+| Queue rule | Effect |
+| --- | --- |
+| overflow drops audio first | a sound gap is cheaper than a broken video chain (`stream/server.py:126-140`) |
+| overflow then drops the oldest video | the viewer is marked unsynced and its queued video is dropped; deltas are skipped until the next keyframe (`stream/server.py:87-97,107-114`) |
+| a keyframe clears queued video | frames older than a keyframe cannot be shown (`stream/server.py:87-90`) |
+
+The GOP cache holds the last keyframe and the frames after it, bounded to 2400
+frames (~80 s at 30 fps, `GOP_MAX_FRAMES`; `stream/lib/h264.py:12,181-217`). A
+client that connects mid-GOP gets `hello` then the cached frames from the
+keyframe, so it starts on a decodable picture instead of waiting for the next
+encoder IDR. When the cache exceeds the bound it is cleared and viewers wait for
+the next keyframe.
+
+The client asks for the same replay with `{"type":"keyframe"}`; the server drops
+queued video, re-sends `hello` and replays the cache (`stream/server.py:447-452`).
+The page sends it when a content-timestamp gap shows that frames were lost or
+when the decoder errors (`stream/web/app.js:163-171,180-196`). A decode queue
+past its cap drops deltas without asking, which the next gap then detects. An
+empty cache means the next live keyframe is the resync point.
 
 ## Wire protocol
 
@@ -89,12 +115,15 @@ Server to client, text (JSON):
 
 | Message | Fields | Meaning |
 | --- | --- | --- |
-| `hello` | `type`, `width`, `height`, `fps`, `codec`, `description` | decoder configuration; sent on connect, after a `reset`, and when SPS/PPS first appear |
-| `reset` | `type` | the capture session changed; drop the decoder and the audio anchor |
+| `hello` | `type`, `width`, `height`, `fps`, `codec`, `description` | decoder configuration and canvas geometry; sent on connect, after a `reset`, after a keyframe request, and when SPS/PPS first appear |
+| `reset` | `type` | the capture session changed; drop the decoder, the video-gap state and the audio anchor |
+| `status` | `type`, `text` | a server-side condition the page should show; today only an input-FIFO write failure |
 
-`width`, `height` and `fps` are constants (1280, 720, 30), not derived from the
-SPS or `openauto.ini`. `codec` is `avc1.<profile><compat><level>` from the SPS
-(e.g. `avc1.42801f`); `description` is base64 avcC, `null` until SPS/PPS exist.
+`width`, `height` and `fps` come from the session's `manifest.json` when it
+carries them and default to 1280/720/30 otherwise (`stream/server.py:196-211`).
+The head unit does not publish geometry yet, so the defaults stand in practice.
+`codec` is `avc1.<profile><compat><level>` from the SPS (e.g. `avc1.42801f`);
+`description` is base64 avcC, `null` until SPS/PPS exist.
 
 Server to client, binary. Header is 9 bytes, `struct.pack(">BQ", type, ts_us)`:
 
@@ -111,25 +140,31 @@ Server to client, binary. Header is 9 bytes, `struct.pack(">BQ", type, ts_us)`:
 | 2 | PCM s16le, 48 kHz, 2 ch, 7680 B max per message |
 
 An AVCC sample is the concatenation of `u32 big-endian length + NAL` for every
-NAL in the access unit. The avcC `description` is
+NAL in the access unit (`stream/lib/h264.py:80-82`). The avcC `description` is
 `01 <SPS[1..3]> FF E1 <u16 len> <SPS> 01 <u16 len> <PPS>`: `FF` declares 4-byte
-NAL lengths and `E1` declares one SPS (`stream/lib/h264.py:67-76`).
+NAL lengths and `E1` declares one SPS (`stream/lib/h264.py:68-77`).
 
 Client to server, text (JSON):
 
 | Message | Fields | Meaning |
 | --- | --- | --- |
 | `tap`, `down`, `move`, `up` | `type`, `x`, `y` integers | validated, then written to the FIFO as `"<cmd> <x> <y>\n"` |
+| `keyframe` | `type` | replay the cached GOP so the decoder resynchronises |
 
-Unknown types and non-integer coordinates are dropped. Each event opens a fresh
-`O_WRONLY|O_NONBLOCK` FIFO fd and closes it.
+Unknown types and non-integer coordinates are dropped. Each input event opens a
+fresh `O_WRONLY|O_NONBLOCK` FIFO fd and closes it; a failure is logged and
+reported to the page as `status` (`stream/server.py:462-474`).
 
 ## Timestamps
 
-`ts_us` is `time.monotonic() - t0` for the server process, sampled when the bytes
-are read (`stream/server.py:64-65`). It is not the AA presentation time and it
-restarts at 0 for every server run. A poll that returns a backlog assigns
-near-identical timestamps to chunks that each span 40 ms.
+`ts_us` comes from one content clock per session: video is
+`frame_index * 1_000_000 / fps` and audio is
+`sample_index * 1_000_000 / 48000` (`stream/lib/clock.py:17-59`;
+`stream/server.py:348-356,401-402`). It is not the AA presentation time. The
+clock restarts at 0 when the session changes, so a read backlog cannot cluster
+timestamps and A/V stay aligned. Video and audio still start at different file
+positions, so the offset between them is whatever the capture files contain at
+connect time.
 
 ## Browser client
 
@@ -137,20 +172,21 @@ near-identical timestamps to chunks that each span 40 ms.
 
 | Behaviour | Detail |
 | --- | --- |
-| WebSocket URL | `ws://<location.hostname>:8081`, hardcoded (`app.js:28-29`) |
-| Reconnect | every 2 s after close or error; `hello` reconfigures the decoder (`app.js:27-48,65-97`) |
-| Video | `VideoDecoder` configured with `codec`, avcC `description`, `codedWidth`, `codedHeight`, `optimizeForLatency`; frames drawn to the canvas |
-| Canvas | fixed `width=1280 height=720` in `index.html:32`; CSS stretches it to the window |
-| Decode queue | delta frames are dropped while `decodeQueueSize > 200`; keyframes are always decoded (`app.js:106-118`) |
-| Audio | muted by default; the first unmute click creates/resumes an `AudioContext` at 48 kHz, `latencyHint: "interactive"` (`app.js:130-140,237-256`) |
-| Audio scheduling | first chunk anchors at `currentTime + 0.15`; later chunks play at `anchor + (ts - firstTs)`; a chunk more than 0.2 s late is dropped; a jump more than 2 s ahead re-anchors (`app.js:142-175`) |
-| Gesture | press then release within 8 px sends one `tap`; movement past 8 px sends `down` at the press point, `move` at most every 50 ms, `up` at release (`app.js:192-235`) |
-| Cancel | `pointercancel` sends `up` at the press point, not the last move point (`app.js:230-235`) |
-| Stats | frame counter and audio on/off once per second; the counter is not reset by `reset` |
+| WebSocket URL | `ws://<location.hostname>:8081`, hardcoded (`app.js:9,42`) |
+| Sockets | at most one per page: `connect()` closes the previous socket before opening a new one (`app.js:38-79`) |
+| Reconnect | every 2 s after close or error; a `4001` close means another tab took the stream, so the page stops reconnecting and says so (`app.js:47-58`) |
+| Video | `VideoDecoder` configured with `codec`, avcC `description`, the `hello` geometry as coded size, `optimizeForLatency`; frames drawn to the canvas |
+| Canvas | sized from `hello` (and from the decoded frame when they differ), `aspect-ratio` keeps the picture undistorted inside the window (`app.js:100-106,150-159`; `index.html:20-23,34`) |
+| Keyframes | deltas are dropped while no keyframe has arrived; a content gap over 250 ms or a decoder error triggers a `keyframe` request; a decode queue over 2400 chunks drops deltas until the next keyframe (`app.js:10-12,161-196`) |
+| Audio | muted by default; the first unmute click creates/resumes an `AudioContext` at 48 kHz, `latencyHint: "interactive"` (`app.js:219-229`) |
+| Audio scheduling | first chunk anchors at `currentTime + 0.15`; later chunks play at `anchor + (ts - firstTs)`; a chunk more than 0.2 s late is dropped; a backward jump re-anchors; a jump more than 1 s ahead re-anchors and recomputes this chunk's start (`app.js:231-268`) |
+| Gesture | press then release within 8 px sends one `tap`; movement past 8 px sends `down` at the press point, `move` at most every 50 ms, `up` at release |
+| Cancel | `pointercancel` sends `up` at the last move point (`app.js:326-332`) |
+| Stats | decoded, dropped and audio state once per second; reset with `reset` |
 
 WebCodecs requires a secure context. `http://localhost` and `http://127.0.0.1`
 qualify; a page served over HTTPS cannot open `ws://` (mixed content), so the
-browser client is limited to plain localhost HTTP (`app.js:29`; vendor
+browser client is limited to plain localhost HTTP (`app.js:42`; vendor
 constraint).
 
 ## Quirks
@@ -163,80 +199,67 @@ Cause: video starts at the last IDR (up to 8 MiB / ~80 s back) while audio start
 at EOF.
 Workaround: wait for the next keyframe, or restart the server after a fresh AA
 session.
-Location: `stream/server.py:172-176,278-284`.
+Location: `stream/server.py:295-299,362-370`.
 
-### One stalled client freezes every view
+### A keyframe request during a long GOP replays old video
 
-Symptom: the picture freezes for all clients when one tab is backgrounded or
-stops reading.
-Cause: `flush_frame` holds `self.lock` and awaits `ws.send` sequentially per
-client; a full TCP window blocks the video and audio loops.
-Workaround: keep one tab; close backgrounded tabs. The page opens one socket per
-tab, and the server broadcasts to all of them.
-Location: `stream/server.py:82-92,258-272,322-335`.
+Symptom: after a resync the picture runs ahead of real time while the replay
+catches up.
+Cause: the replay is the cached GOP from its keyframe; the client decodes it
+faster than real time to reach the live edge.
+Workaround: none needed; the page catches up on its own. A GOP longer than 2400
+frames clears the cache instead and the page waits for the next encoder IDR.
+Location: `stream/lib/h264.py:181-217`, `stream/server.py:407-415`.
 
-### Joining mid-GOP decodes a broken picture
+### A dropped frame waits for the next keyframe
 
-Symptom: a new tab shows smeared or blocky video until the next IDR (~60 s).
-Cause: the cached GOP is pushed as one burst; the page drops deltas once
-`decodeQueueSize > 200` and there is no keyframe request.
-Workaround: reload after the next IDR.
-Location: `stream/server.py:322-335`, `stream/web/app.js:109`.
+Symptom: the picture freezes for up to one GOP (~60 s) instead of showing
+artifacts.
+Cause: the bounded viewer queue drops the oldest video when the browser keeps
+falling behind; the deltas that follow have no reference, so they are skipped
+until the next keyframe.
+Workaround: the page issues a `keyframe` request on the next content gap, which
+returns it to the cached GOP.
+Location: `stream/server.py:87-97,126-140`.
 
 ### Audio timestamps cluster and overlap
 
 Symptom: several PCM chunks start at the same instant after a read backlog.
-Cause: read-time timestamps sampled per chunk in one loop iteration.
-Workaround: none in the client; reload to re-anchor.
-Location: `stream/server.py:313-318`, `stream/web/app.js:154`.
-
-### Restarting the server silences audio
-
-Symptom: audio stays silent after a server restart while the page remains open;
-video recovers via `hello`.
-Cause: `t0` restarts at 0, so every new chunk is older than
-`currentTime - 0.2` and is dropped; the anchor is only reset by unmute or
-`reset`.
-Workaround: reload the page, or unmute again.
-Location: `stream/web/app.js:149-155`.
-
-### Re-anchoring keeps the stale `when`
-
-Symptom: after a jump larger than 2 s, one chunk plays late over the following
-audio.
-Cause: the jump branch resets `firstAudioTs` and `audioBaseTime` but keeps the
-`when` computed before the jump for the current chunk.
-Workaround: reload.
-Location: `stream/web/app.js:154-160`.
+Cause: before the content clock, timestamps were sampled at read time per chunk.
+Workaround: none; the clock derives each chunk's timestamp from the sample
+index (`stream/server.py:401-402`).
+Location: `stream/lib/clock.py:54-59`.
 
 ### Lost input is silent
 
 Symptom: taps do nothing and the page looks alive.
-Cause: a FIFO write failure (`ENXIO` with no reader, `ENOENT` after cleanup) is
-printed in the server log only.
-Workaround: check the server log; keep `autoapp` running and the FIFO writer
-attached.
-Location: `stream/server.py:351-360`.
+Cause: a FIFO write failure (`ENXIO` with no reader, `ENOENT` after cleanup) is a
+server-side condition, not a page event.
+Workaround: the page shows the server's `status` text; keep `autoapp` running and
+the FIFO writer attached.
+Location: `stream/server.py:468-474`.
 
 ### The page ignores `--ws-port`
 
 Symptom: changing `--ws-port` leaves the page unable to connect.
-Cause: `app.js:29` hardcodes `ws://<host>:8081`.
+Cause: `app.js:9` hardcodes `ws://<host>:8081`.
 Workaround: keep the default ports, or edit `app.js`.
-Location: `stream/web/app.js:29`.
+Location: `stream/web/app.js:9`.
 
 ### Input frames are unlimited
 
 Symptom: any local page can push a multi-gigabyte text frame or flood input.
 Cause: `max_size=None` on the WebSocket server and no rate limiting.
 Workaround: loopback binding is the only boundary; do not expose the port.
-Location: `stream/server.py:336-360`, `stream/auriga_stream.py:45`.
+Location: `stream/server.py:417-484`, `stream/auriga_stream.py:45`.
 
 ## Consumer contract
 
 A local process can consume the WebSocket instead of the browser: read `hello`,
-decode AVCC with the base64 avcC, treat type 1/3 as video and type 2 as PCM, and
-reconfigure on `hello`/`reset`. Timestamps are a server-relative clock, useful
-only for ordering. The protocol is unauthenticated and loopback-only; fronting it
-with HTTPS breaks the delivered page (mixed content) and is not a supported
-deployment.
+decode AVCC with the base64 avcC, treat type 1/3 as video and type 2 as PCM,
+reconfigure on `hello`, discard state on `reset`, and send `{"type":"keyframe"}`
+when frames were lost. Only one consumer is served; a second connection replaces
+the first. Timestamps are a session-relative content clock, useful for A/V
+alignment and gap detection. The protocol is unauthenticated and loopback-only;
+fronting it with HTTPS breaks the delivered page (mixed content) and is not a
+supported deployment.

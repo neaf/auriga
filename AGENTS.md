@@ -95,8 +95,10 @@ If an emulator is attached, always target the phone explicitly:
 - **Touch:** tap/drag the Brave canvas, or write to the FIFO:
   `echo 'tap 640 360' > /tmp/auriga-in`. Coordinates are in 1280x720 space.
 - **Audio:** muted until the 🔇 button is clicked; it is 48 kHz/16-bit stereo.
-- **New clients:** the stream server sends the most recent H.264 IDR and the
-  following deltas, so a late client can start decoding immediately.
+- **New clients:** the stream server replays its cached GOP (the most recent
+  H.264 IDR plus the following deltas, bounded), so a late client can start
+  decoding immediately. One viewer at a time: a second tab takes over and the
+  first stops reconnecting.
 - **Sessions:** each AA session gets its own `session-<id>/` directory and the
   `current` symlink repoints to it; the server sends a `reset` on the change.
   The five newest sessions are kept.
@@ -109,14 +111,17 @@ The stream is designed to be consumed by another local process:
 - HTTP `http://127.0.0.1:8080` serves the Brave client from `stream/web/`.
 - WebSocket `ws://127.0.0.1:8081`:
   - text `hello`: `{type:"hello", width, height, fps, codec, description}`,
-    where `description` is base64 avcC (SPS/PPS) and `codec` is e.g.
-    `avc1.42801f`.
+    geometry from the session's `manifest.json` (1280x720/30 by default), where
+    `description` is base64 avcC (SPS/PPS) and `codec` is e.g. `avc1.42801f`.
   - binary: `type:u8 | timestamp_us:u64 BE | payload`.
     - `1` = H.264 keyframe (AVCC), `3` = H.264 delta (AVCC),
-    - `2` = PCM s16le, 48 kHz, stereo, 20 ms chunks.
-  - text `reset` when `current` moves to a new session.
+    - `2` = PCM s16le, 48 kHz, stereo, 40 ms chunks.
+  - text `reset` when `current` moves to a new session; text `status` for a
+    server-side condition (today: a failed input-FIFO write).
   - client → server text: `{type:"tap"|"down"|"move"|"up", x, y}` in 1280x720
-    space; the server writes `tap X Y` etc. to `/tmp/auriga-in`.
+    space; the server writes `tap X Y` etc. to `/tmp/auriga-in`. Or
+    `{type:"keyframe"}` to replay the cached GOP.
+  - one viewer: a second connection replaces the first (close code `4001`).
 - The server binds **localhost only** and has no authentication. WebCodecs
   requires a secure context; use `localhost` or front it with HTTPS. Do not
   expose 8080/8081 publicly.

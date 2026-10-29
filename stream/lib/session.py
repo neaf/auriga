@@ -152,7 +152,7 @@ class SessionEvent:
     `changed` is True only when `current` moved to a different session; the
     first observation of a session reports `changed == False` and lists every
     stream in `streams`, so a fresh server adopts an existing session without
-    broadcasting a reset. `streams` names the streams whose file must be
+    sending a reset. `streams` names the streams whose file must be
     reopened at offset 0: all of them for a new session, otherwise only those
     whose segment count advanced.
     """

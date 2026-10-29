@@ -15,13 +15,16 @@ FRAME_BYTES = CHANNELS * BYTES_PER_SAMPLE  # one stereo s16 sample
 
 
 def video_timestamp(frame_index: int, fps: int = DEFAULT_FPS) -> int:
-    """Microseconds for `frame_index`, floored to an integer."""
-    return frame_index * MICROS // fps
+    """Microseconds for `frame_index`, floored to an integer.
+
+    `fps` may be fractional; the head unit publishes it in `manifest.json`.
+    """
+    return int(frame_index * MICROS // fps)
 
 
 def audio_timestamp(sample_index: int, sample_rate: int = DEFAULT_SAMPLE_RATE) -> int:
     """Microseconds for `sample_index` (one stereo s16 frame), floored."""
-    return sample_index * MICROS // sample_rate
+    return int(sample_index * MICROS // sample_rate)
 
 
 class ContentClock:

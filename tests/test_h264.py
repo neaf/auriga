@@ -5,6 +5,9 @@ import unittest
 from pathlib import Path
 
 from stream.lib.h264 import (
+    FrameAssembler,
+    GopBuffer,
+    avcc_sample,
     build_avcc,
     extract_sps_pps,
     find_last_idr,
@@ -95,6 +98,98 @@ class BuildAvccTest(unittest.TestCase):
         )
         self.assertEqual(avcc[11 + len(SPS):], PPS)
         self.assertEqual(len(avcc), 11 + len(SPS) + len(PPS))
+
+
+class AvccSampleTest(unittest.TestCase):
+    def test_length_prefixes(self):
+        self.assertEqual(avcc_sample([SPS, PPS]), struct.pack(">I", len(SPS)) + SPS + struct.pack(">I", len(PPS)) + PPS)
+
+    def test_empty_nals_are_skipped(self):
+        self.assertEqual(avcc_sample([b"", IDR]), struct.pack(">I", len(IDR)) + IDR)
+
+    def test_nothing(self):
+        self.assertEqual(avcc_sample([]), b"")
+
+
+class FrameAssemblerTest(unittest.TestCase):
+    def test_sps_pps_are_prepended_to_the_next_frame(self):
+        assembler = FrameAssembler()
+        for nal in (SPS, PPS):
+            self.assertEqual(assembler.push(nal), [])
+        self.assertEqual(assembler.push(IDR), [])
+        self.assertEqual(assembler.flush(), (True, [SPS, PPS, IDR]))
+
+    def test_a_following_vcl_closes_the_frame(self):
+        assembler = FrameAssembler()
+        for nal in (SPS, PPS, IDR):
+            assembler.push(nal)
+        self.assertEqual(assembler.push(DELTA), [(True, [SPS, PPS, IDR])])
+        self.assertEqual(assembler.flush(), (False, [DELTA]))
+
+    def test_aud_starts_a_new_frame(self):
+        assembler = FrameAssembler()
+        for nal in (SPS, PPS, IDR):
+            assembler.push(nal)
+        aud = bytes([0x09, 0xF0])
+        self.assertEqual(assembler.push(aud), [(True, [SPS, PPS, IDR])])
+        self.assertEqual(assembler.flush(), None)
+        assembler.push(SPS)
+        assembler.push(DELTA)
+        self.assertEqual(assembler.flush(), (False, [aud, SPS, DELTA]))
+
+    def test_non_vcl_after_a_vcl_stays_in_the_frame(self):
+        assembler = FrameAssembler()
+        assembler.push(IDR)
+        sei = bytes([0x06, 0x01])
+        assembler.push(sei)
+        self.assertEqual(assembler.flush(), (True, [IDR, sei]))
+
+    def test_flush_without_a_frame(self):
+        self.assertIsNone(FrameAssembler().flush())
+
+    def test_reset_drops_pending_nals(self):
+        assembler = FrameAssembler()
+        assembler.push(SPS)
+        assembler.push(IDR)
+        assembler.reset()
+        assembler.push(DELTA)
+        self.assertEqual(assembler.flush(), (False, [DELTA]))
+
+
+class GopBufferTest(unittest.TestCase):
+    def test_deltas_before_a_keyframe_are_not_cached(self):
+        gop = GopBuffer()
+        self.assertFalse(gop.add(b"delta", False))
+        self.assertEqual(gop.messages(), [])
+        self.assertEqual(len(gop), 0)
+
+    def test_keyframe_starts_a_new_cache(self):
+        gop = GopBuffer()
+        gop.add(b"key", True)
+        gop.add(b"delta", False)
+        self.assertEqual(gop.messages(), [(True, b"key"), (False, b"delta")])
+        gop.add(b"key2", True)
+        self.assertEqual(gop.messages(), [(True, b"key2")])
+
+    def test_clear(self):
+        gop = GopBuffer()
+        gop.add(b"key", True)
+        gop.clear()
+        self.assertEqual(len(gop), 0)
+        self.assertFalse(gop.add(b"delta", False))
+
+    def test_overflow_drops_the_whole_cache(self):
+        gop = GopBuffer(max_frames=2)
+        gop.add(b"key", True)
+        self.assertTrue(gop.add(b"delta1", False))
+        self.assertFalse(gop.add(b"delta2", False))
+        self.assertEqual(gop.messages(), [])
+
+    def test_messages_is_a_copy(self):
+        gop = GopBuffer()
+        gop.add(b"key", True)
+        gop.messages().append((False, b"delta"))
+        self.assertEqual(len(gop), 1)
 
 
 class FindLastIdrTest(TempFileMixin, unittest.TestCase):
