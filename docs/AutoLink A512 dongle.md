@@ -186,7 +186,7 @@ MTP (`unverified`).
 Workaround: physical unplug/replug with the phone's BT/Wi-Fi on. `uhubctl` port
 power switching may cut only the data port, not VBUS (`unverified`). Ask before
 replugging; it interrupts any live session.
-Location: host side `openauto/src/autoapp/App.cpp:178-188`.
+Location: host side `openauto/src/autoapp/App.cpp:175-186`.
 
 ### CarPlay latch
 

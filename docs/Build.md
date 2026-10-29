@@ -32,7 +32,7 @@ ls "$(brew --prefix qt@5)/lib/cmake" | grep -E "Qt5(Bluetooth|Multimedia|Network
 ## Build order
 
 1. aasdk at `9bf6adf` with `patches/aasdk-usb-filter.patch` and two tree edits.
-2. OpenAuto at `4cc739b8` with the four OpenAuto patches, in order.
+2. OpenAuto at `4cc739b8` with the five OpenAuto patches, in order.
 3. The stream server's `.venv`.
 
 ### aasdk
@@ -78,6 +78,7 @@ git -C openauto apply "$PWD/patches/openauto-capture.patch"
 git -C openauto apply "$PWD/patches/openauto-macos.patch"
 git -C openauto apply "$PWD/patches/openauto-auriga-usb-filter.patch"
 git -C openauto apply "$PWD/patches/openauto-auriga-gps-guard.patch"
+git -C openauto apply "$PWD/patches/openauto-auriga-identity.patch"
 
 cmake -S openauto -B build-openauto-mac \
   -DCMAKE_BUILD_TYPE=Release -DNOPI=ON \
@@ -102,15 +103,17 @@ cmake --build build-openauto-mac --target autoapp -j8
 (`CMAKE_CXX_FLAGS_INIT`) for `<aasdk/...>`. `-DNOPI=ON` disables the OMX video
 backend and selects the plain Qt/capture backends.
 
-Patch order matters: `openauto-capture` then `openauto-macos`, then the two
-incremental `auriga-*` patches. The USB-filter patch calls `aurigaCaptureMode()`
-from the macOS patch. Patches 2 and 3 both rewrite `App.cpp`; patches 1 and 4
+Patch order matters: `openauto-capture` then `openauto-macos`, then the three
+incremental `auriga-*` patches. The macOS and USB-filter patches call
+`projection::captureModeEnabled()`, which patch 1 defines in
+`AurigaSession.cpp`. Patches 2 and 3 both rewrite `App.cpp`; patches 1 and 4
 both rewrite `SensorService.cpp`. Apply and verify with absolute paths, because a
 relative path is resolved inside the nested clone:
 
 ```bash
 git -C openauto apply --check --reverse "$PWD/patches/openauto-auriga-usb-filter.patch"
 git -C openauto apply --check --reverse "$PWD/patches/openauto-auriga-gps-guard.patch"
+git -C openauto apply --check --reverse "$PWD/patches/openauto-auriga-identity.patch"
 git -C aasdk-upstream apply --check --reverse "$PWD/patches/aasdk-usb-filter.patch"
 ```
 
@@ -161,7 +164,7 @@ Symptom: a non-capture `autoapp` cannot bind its listener.
 Cause: macOS ControlCenter (AirPlay Receiver) listens on TCP 5000; OpenAuto's
 AA-over-Wi-Fi listener wants the same port.
 Workaround: run in capture mode. `AURIGA_CAPTURE_DIR` makes `App` bind port 0
-and skip `startServerSocket()` (`openauto/src/autoapp/App.cpp:42-43,185-188`).
+and skip `startServerSocket()` (`openauto/src/autoapp/App.cpp:40-41,182-184`).
 The acceptor is still constructed and listening on an ephemeral port on all
 interfaces; it never accepts.
 
@@ -175,7 +178,7 @@ Workaround: re-run the configure step after adding or removing files.
 
 Symptom: a pristine clone + the documented patches leaves aasdk at AA protocol
 1.6, and the Darwin build of `aap_protobuf` fails on `absl/...` headers.
-Cause: the two aasdk edits above have no patch file. The four OpenAuto patches
+Cause: the two aasdk edits above have no patch file. The five OpenAuto patches
 fully describe `openauto/`: applying them to a pristine `4cc739b8` tree
 reproduces the nested tree byte for byte.
 Workaround: apply the two aasdk edits after the patch list, or build from the
@@ -214,6 +217,7 @@ cmake --build build-openauto-mac --target autoapp -j8
 for f in scripts/*.sh openauto-config/*.sh; do bash -n "$f"; done
 git -C openauto apply --check --reverse "$PWD/patches/openauto-auriga-usb-filter.patch"
 git -C openauto apply --check --reverse "$PWD/patches/openauto-auriga-gps-guard.patch"
+git -C openauto apply --check --reverse "$PWD/patches/openauto-auriga-identity.patch"
 git -C aasdk-upstream apply --check --reverse "$PWD/patches/aasdk-usb-filter.patch"
 ```
 

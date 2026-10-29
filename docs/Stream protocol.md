@@ -46,7 +46,7 @@ follows the pointer instead of watching file sizes.
 | --- | --- | --- |
 | `current` | relative symlink to `session-<id>` | polled every 50 ms (`stream/lib/session.py:123-135,167-214`; `stream/server.py:221-226`) |
 | `manifest.json` | `{session, width, height, fps, <stream>: count}` | polled with `current`; names the `hello` geometry and the segment counts (`stream/lib/session.py:104-120,138-145`; `stream/server.py:237-247`) |
-| `video.h264` | Annex-B H.264, 4-byte start codes (see `docs/Android Auto head unit.md`) | at startup: last type-5 NAL within the last 8 MiB, else offset 0 (`stream/lib/h264.py:85-115`; `stream/server.py:295-299`). After a session or segment change: offset 0 |
+| `video.h264` | Annex-B H.264, 4-byte start codes, SPS/PPS at the head of each segment (see `docs/Android Auto head unit.md`) | at startup: last type-5 NAL within the last 8 MiB, else offset 0 (`stream/lib/h264.py:85-115`; `stream/server.py:295-299`). After a session or segment change: offset 0 |
 | `audio-media.wav` | 44-byte PCM WAV header, 48 kHz, 2 ch, 16-bit | at startup: end of file (`max(44, size)`); after a change: byte 44 (`stream/server.py:362-370`) |
 | input FIFO | text lines `tap|down|move|up X Y` | written per client event (`stream/server.py:462-474`) |
 
@@ -119,9 +119,12 @@ Server to client, text (JSON):
 | `reset` | `type` | the capture session changed; drop the decoder, the video-gap state and the audio anchor |
 | `status` | `type`, `text` | a server-side condition the page should show; today only an input-FIFO write failure |
 
-`width`, `height` and `fps` come from the session's `manifest.json` when it
-carries them and default to 1280/720/30 otherwise (`stream/server.py:196-211`).
-The head unit does not publish geometry yet, so the defaults stand in practice.
+`width`, `height` and `fps` come from the session's `manifest.json`, which the
+head unit writes from `Video.Resolution` / `Video.FPS`
+(`stream/server.py:196-211`; `docs/Android Auto head unit.md`). The parser falls
+back to 1280/720/30 only when a manifest is absent or carries no geometry
+(`stream/lib/session.py:24-26,104-120`). `fps` is rounded to an integer for the
+content clock and reported as that integer.
 `codec` is `avc1.<profile><compat><level>` from the SPS (e.g. `avc1.42801f`);
 `description` is base64 avcC, `null` until SPS/PPS exist.
 

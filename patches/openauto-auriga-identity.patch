@@ -1,0 +1,31 @@
+diff --git a/src/autoapp/Service/AndroidAutoEntity.cpp b/src/autoapp/Service/AndroidAutoEntity.cpp
+index 09dce1b..ac14396 100644
+--- a/src/autoapp/Service/AndroidAutoEntity.cpp
++++ b/src/autoapp/Service/AndroidAutoEntity.cpp
+@@ -179,7 +179,7 @@ namespace f1x {
+           serviceDiscoveryResponse.mutable_channels()->Reserve(256);
+           serviceDiscoveryResponse.set_driver_position(aap_protobuf::service::control::message::DriverPosition::DRIVER_POSITION_RIGHT);
+           // serviceDiscoveryResponse.set_can_play_native_media_during_vr(false); // Deprecated function removed
+-          serviceDiscoveryResponse.set_display_name("Crankshaft-NG");
++          serviceDiscoveryResponse.set_display_name("Auriga");
+           serviceDiscoveryResponse.set_probe_for_support(false);
+ 
+           auto *connectionConfiguration = serviceDiscoveryResponse.mutable_connection_configuration();
+@@ -193,13 +193,12 @@ namespace f1x {
+ 
+           auto *headUnitInfo = serviceDiscoveryResponse.mutable_headunit_info();
+ 
+-          serviceDiscoveryResponse.set_display_name("Crankshaft-NG");
+-          headUnitInfo->set_make("Crankshaft");
+-          headUnitInfo->set_model("Universal");
++          headUnitInfo->set_make("Auriga");
++          headUnitInfo->set_model("Auriga");
+           headUnitInfo->set_year("2018");
+           headUnitInfo->set_vehicle_id("2024110822150988");
+-          headUnitInfo->set_head_unit_make("f1x");
+-          headUnitInfo->set_head_unit_model("Crankshaft-NG Autoapp");
++          headUnitInfo->set_head_unit_make("Auriga");
++          headUnitInfo->set_head_unit_model("Auriga");
+           headUnitInfo->set_head_unit_software_build("1");
+           headUnitInfo->set_head_unit_software_version("1.0");
+ 

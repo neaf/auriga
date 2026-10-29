@@ -1,7 +1,8 @@
 diff --git a/src/autoapp/App.cpp b/src/autoapp/App.cpp
+index 1face61..f4946f3 100644
 --- a/src/autoapp/App.cpp
 +++ b/src/autoapp/App.cpp
-@@ -52,11 +52,17 @@
+@@ -49,11 +49,17 @@ namespace f1x::openauto::autoapp {
        catch (...) {
          OPENAUTO_LOG(error) << "[App] waitForUSBDevice() -exception caused by this->waitForDevice();";
        }
@@ -14,7 +15,7 @@ diff --git a/src/autoapp/App.cpp b/src/autoapp/App.cpp
 +      // runs the AOA query chain against every USB device, which switches a
 +      // connected development phone into accessory mode. Skip it in capture
 +      // mode so the phone stays in MTP+ADB.
-+      if (!aurigaCaptureMode()) {
++      if (!projection::captureModeEnabled()) {
 +        try {
 +          this->enumerateDevices();
 +        }
@@ -25,9 +26,10 @@ diff --git a/src/autoapp/App.cpp b/src/autoapp/App.cpp
  
      });
 diff --git a/src/autoapp/autoapp.cpp b/src/autoapp/autoapp.cpp
+index 8d37079..5e60327 100644
 --- a/src/autoapp/autoapp.cpp
 +++ b/src/autoapp/autoapp.cpp
-@@ -239,7 +239,11 @@
+@@ -239,7 +239,11 @@ int main(int argc, char* argv[])
      autoapp::service::ServiceFactory serviceFactory(ioService, configuration);
      autoapp::service::AndroidAutoEntityFactory androidAutoEntityFactory(ioService, configuration, serviceFactory);
  

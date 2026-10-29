@@ -69,7 +69,8 @@ ssh -N -L 8080:127.0.0.1:8080 -L 8081:127.0.0.1:8081 pi@auriga-pi.local
 
 - Server → client text `hello`:
   `{type, width, height, fps, codec, description}` where geometry comes from
-  the session's `manifest.json` (1280x720/30 until the head unit publishes it),
+  the session's `manifest.json` (which the head unit fills from its configured
+  video resolution; 1280x720/30 when it carries none),
   `description` is base64 avcC (SPS/PPS) and `codec` is e.g. `avc1.42801f`.
 - Server → client binary: `type:u8 | timestamp_us:u64 BE | payload`
   - type 1 = H.264 key frame (AVCC), type 3 = H.264 delta (AVCC),

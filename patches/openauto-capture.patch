@@ -64,15 +64,17 @@ index 0000000..ae525da
 +}
 diff --git a/include/f1x/openauto/autoapp/Projection/AurigaAudioOutput.hpp b/include/f1x/openauto/autoapp/Projection/AurigaAudioOutput.hpp
 new file mode 100644
-index 0000000..5baa700
+index 0000000..61dffef
 --- /dev/null
 +++ b/include/f1x/openauto/autoapp/Projection/AurigaAudioOutput.hpp
-@@ -0,0 +1,66 @@
+@@ -0,0 +1,75 @@
 +/*
 +*  This file is part of openauto project.
 +*
 +*  Auriga capture output: writes each AA audio channel to its own WAV file in
 +*  the current session directory. Selected only when AURIGA_CAPTURE_DIR is set.
++*  The AA callback only queues a copy; a writer thread does the file I/O and the
++*  WAV header rewrite.
 +*/
 +
 +#pragma once
@@ -80,10 +82,11 @@ index 0000000..5baa700
 +#include <cstdint>
 +#include <fstream>
 +#include <memory>
-+#include <mutex>
 +#include <string>
++#include <vector>
 +
 +#include <f1x/openauto/autoapp/Projection/AurigaSession.hpp>
++#include <f1x/openauto/autoapp/Projection/AurigaWriter.hpp>
 +#include <f1x/openauto/autoapp/Projection/IAudioOutput.hpp>
 +
 +namespace f1x
@@ -105,6 +108,7 @@ index 0000000..5baa700
 +    bool open() override;
 +    void write(aasdk::messenger::Timestamp::ValueType timestamp,
 +               const aasdk::common::DataConstBuffer& buffer) override;
++    void setCodecConfig(const aasdk::common::DataConstBuffer& buffer) override;
 +    void start() override;
 +    void stop() override;
 +    void suspend() override;
@@ -114,6 +118,8 @@ index 0000000..5baa700
 +    uint32_t getSampleRate() const override;
 +
 +private:
++    // Run on the writer thread only.
++    void writeChunk(const std::vector<uint8_t>& chunk);
 +    void writeHeader();
 +    void updateHeader();
 +    void rotate();
@@ -122,12 +128,15 @@ index 0000000..5baa700
 +    std::string stream_;
 +    std::string path_;
 +    std::ofstream file_;
-+    std::mutex mutex_;
 +    uint32_t channelCount_;
 +    uint32_t sampleSize_;
 +    uint32_t sampleRate_;
 +    uint64_t dataBytes_;
 +    uint64_t lastHeaderUpdate_;
++    bool accepting_;
++    // Declared last: its destructor joins the writer thread before the file is
++    // destroyed.
++    AurigaWriter writer_;
 +};
 +
 +}
@@ -204,16 +213,17 @@ index 0000000..a67fc6c
 +}
 diff --git a/include/f1x/openauto/autoapp/Projection/AurigaSession.hpp b/include/f1x/openauto/autoapp/Projection/AurigaSession.hpp
 new file mode 100644
-index 0000000..0756899
+index 0000000..4a0227e
 --- /dev/null
 +++ b/include/f1x/openauto/autoapp/Projection/AurigaSession.hpp
-@@ -0,0 +1,61 @@
+@@ -0,0 +1,76 @@
 +/*
 +*  This file is part of openauto project.
 +*
 +*  Auriga capture session: one session per AA entity. Mints the id, creates
 +*  <capture-dir>/session-<id>/, publishes <capture-dir>/current and owns
-+*  manifest.json (per-stream segment counts) plus the retention cap.
++*  manifest.json (geometry, per-stream segment counts) plus the retention cap.
++*  This header also holds the one definition of capture mode.
 +*/
 +
 +#pragma once
@@ -234,6 +244,13 @@ index 0000000..0756899
 +namespace projection
 +{
 +
++// Capture mode is opt-in and has exactly one definition: AURIGA_CAPTURE_DIR is
++// set and non-empty. The environment is read once; both App and ServiceFactory
++// branch on these two helpers.
++bool captureModeEnabled();
++// The capture directory, created on first use; empty when capture mode is off.
++const std::string& captureDirectory();
++
 +class AurigaSessionManager
 +{
 +public:
@@ -243,7 +260,11 @@ index 0000000..0756899
 +    // Most recent sessions kept on disk; the current one is never pruned.
 +    static constexpr std::size_t KEEP_SESSIONS = 5;
 +
-+    AurigaSessionManager(std::string captureDir, std::size_t keepSessions = KEEP_SESSIONS);
++    // `width`, `height` and `fps` are the AA video geometry the phone is told to
++    // use; they are published in manifest.json so the stream server and the
++    // browser do not have to guess.
++    AurigaSessionManager(std::string captureDir, uint32_t width, uint32_t height, double fps,
++                         std::size_t keepSessions = KEEP_SESSIONS);
 +
 +    const std::string& sessionId() const;
 +    const std::string& directory() const;
@@ -260,6 +281,9 @@ index 0000000..0756899
 +    std::string captureDir_;
 +    std::string sessionId_;
 +    std::string directory_;
++    uint32_t width_;
++    uint32_t height_;
++    double fps_;
 +    std::size_t keepSessions_;
 +    std::map<std::string, uint64_t> segments_;
 +    std::mutex mutex_;
@@ -271,16 +295,17 @@ index 0000000..0756899
 +}
 diff --git a/include/f1x/openauto/autoapp/Projection/AurigaVideoOutput.hpp b/include/f1x/openauto/autoapp/Projection/AurigaVideoOutput.hpp
 new file mode 100644
-index 0000000..a0ce176
+index 0000000..9a9d06f
 --- /dev/null
 +++ b/include/f1x/openauto/autoapp/Projection/AurigaVideoOutput.hpp
-@@ -0,0 +1,55 @@
+@@ -0,0 +1,67 @@
 +/*
 +*  This file is part of openauto project.
 +*
-+*  Auriga capture output: writes the raw H.264 stream to a file instead of
-+*  decoding it through Qt Multimedia. Selected only when AURIGA_CAPTURE_DIR is
-+*  set, so normal OpenAuto behaviour is unchanged.
++*  Auriga capture output: appends H.264 Annex-B access units to the current
++*  session's video.h264, rotating to a new segment before 4 GiB. The AA callback
++*  only queues a copy; a writer thread does the file I/O. Codec config (SPS/PPS)
++*  is cached separately and written once at the head of each segment.
 +*/
 +
 +#pragma once
@@ -290,8 +315,10 @@ index 0000000..a0ce176
 +#include <memory>
 +#include <mutex>
 +#include <string>
++#include <vector>
 +
 +#include <f1x/openauto/autoapp/Projection/AurigaSession.hpp>
++#include <f1x/openauto/autoapp/Projection/AurigaWriter.hpp>
 +#include <f1x/openauto/autoapp/Projection/VideoOutput.hpp>
 +
 +namespace f1x
@@ -314,22 +341,286 @@ index 0000000..a0ce176
 +    bool init() override;
 +    void write(aasdk::messenger::Timestamp::ValueType timestamp,
 +               const aasdk::common::DataConstBuffer& buffer) override;
++    void setCodecConfig(const aasdk::common::DataConstBuffer& buffer) override;
 +    void stop() override;
 +
 +private:
++    // Runs on the writer thread only.
++    void writeChunk(const std::vector<uint8_t>& chunk);
 +    void rotate();
 +
 +    std::shared_ptr<AurigaSessionManager> session_;
 +    std::string path_;
 +    std::ofstream file_;
-+    std::mutex mutex_;
++    std::vector<uint8_t> codecConfig_;
++    std::mutex codecConfigMutex_;
 +    uint64_t segmentBytes_;
++    bool segmentStarted_;
++    bool accepting_;
++    // Declared last: its destructor joins the writer thread before the file and
++    // the codec-config buffer are destroyed.
++    AurigaWriter writer_;
 +};
 +
 +}
 +}
 +}
 +}
+diff --git a/include/f1x/openauto/autoapp/Projection/AurigaWriter.hpp b/include/f1x/openauto/autoapp/Projection/AurigaWriter.hpp
+new file mode 100644
+index 0000000..eeb6aa8
+--- /dev/null
++++ b/include/f1x/openauto/autoapp/Projection/AurigaWriter.hpp
+@@ -0,0 +1,220 @@
++/*
++*  This file is part of openauto project.
++*
++*  Auriga capture writer: a bounded in-memory queue plus one writer thread. The
++*  AA media callback only copies its buffer into the queue, so no file I/O ever
++*  runs on the channel strand; the writer thread drains the queue to the
++*  segment file, where rotation and WAV header rewrites happen too.
++*/
++
++#pragma once
++
++#include <condition_variable>
++#include <cstddef>
++#include <cstdint>
++#include <cstring>
++#include <deque>
++#include <functional>
++#include <mutex>
++#include <string>
++#include <thread>
++#include <utility>
++#include <vector>
++
++#include <aasdk/Common/Data.hpp>
++
++#include <f1x/openauto/Common/Log.hpp>
++
++namespace f1x
++{
++namespace openauto
++{
++namespace autoapp
++{
++namespace projection
++{
++
++class AurigaWriter
++{
++public:
++    using Sink = std::function<void(const std::vector<uint8_t>&)>;
++
++    // High-water mark: ~8 s of video at 30 fps, with a byte cap so a burst of
++    // large access units cannot grow the process without bound.
++    static constexpr std::size_t MAX_CHUNKS = 240;
++    static constexpr std::size_t MAX_BYTES = 64ull * 1024ull * 1024ull;
++
++    AurigaWriter(std::string stream, Sink sink)
++        : stream_(std::move(stream))
++        , sink_(std::move(sink))
++        , queuedBytes_(0)
++        , dropped_(0)
++        , stopping_(false)
++    {
++    }
++
++    ~AurigaWriter()
++    {
++        this->stop();
++    }
++
++    AurigaWriter(const AurigaWriter&) = delete;
++    AurigaWriter& operator=(const AurigaWriter&) = delete;
++
++    void start()
++    {
++        std::lock_guard<std::mutex> lock(mutex_);
++
++        if (thread_.joinable() || stopping_)
++        {
++            return;
++        }
++
++        thread_ = std::thread([this]() { this->run(); });
++    }
++
++    // Copy the buffer into the queue and return. This is the only work the
++    // channel strand does for a media buffer; when the queue is full the oldest
++    // chunk is dropped and counted instead of blocking the strand.
++    void append(const aasdk::common::DataConstBuffer& buffer)
++    {
++        if (buffer.cdata == nullptr || buffer.size == 0)
++        {
++            return;
++        }
++
++        std::vector<uint8_t> chunk(static_cast<std::size_t>(buffer.size));
++        std::memcpy(chunk.data(), buffer.cdata, chunk.size());
++
++        {
++            std::lock_guard<std::mutex> lock(mutex_);
++
++            if (stopping_)
++            {
++                return;
++            }
++
++            while (!queue_.empty() &&
++                   (queue_.size() >= MAX_CHUNKS || queuedBytes_ + chunk.size() > MAX_BYTES))
++            {
++                this->dropOldestLocked();
++            }
++
++            if (queue_.size() >= MAX_CHUNKS || queuedBytes_ + chunk.size() > MAX_BYTES)
++            {
++                // A single chunk larger than the byte cap: drop it, keep serving.
++                this->countDropLocked();
++                return;
++            }
++
++            queuedBytes_ += chunk.size();
++            queue_.push_back(std::move(chunk));
++        }
++
++        condition_.notify_one();
++    }
++
++    // Drain what is still queued, then join the writer thread. Called once, at
++    // sink stop; blocking here is shutdown, not the media path.
++    void stop()
++    {
++        {
++            std::lock_guard<std::mutex> lock(mutex_);
++            stopping_ = true;
++        }
++
++        condition_.notify_all();
++
++        if (thread_.joinable())
++        {
++            thread_.join();
++        }
++    }
++
++    uint64_t dropped() const
++    {
++        std::lock_guard<std::mutex> lock(mutex_);
++        return dropped_;
++    }
++
++    const std::string& stream() const
++    {
++        return stream_;
++    }
++
++private:
++    void run()
++    {
++        for (;;)
++        {
++            std::vector<uint8_t> chunk;
++
++            {
++                std::unique_lock<std::mutex> lock(mutex_);
++                condition_.wait(lock, [this]() { return stopping_ || !queue_.empty(); });
++
++                if (queue_.empty())
++                {
++                    if (stopping_)
++                    {
++                        return;
++                    }
++                    continue;
++                }
++
++                chunk = std::move(queue_.front());
++                queue_.pop_front();
++                queuedBytes_ -= chunk.size();
++            }
++
++            if (!sink_)
++            {
++                continue;
++            }
++
++            try
++            {
++                sink_(chunk);
++            }
++            catch (...)
++            {
++                OPENAUTO_LOG(error) << "[AurigaWriter] " << stream_ << " write failed";
++            }
++        }
++    }
++
++    void dropOldestLocked()
++    {
++        queuedBytes_ -= queue_.front().size();
++        queue_.pop_front();
++        this->countDropLocked();
++    }
++
++    // Caller holds mutex_. Log the first drop and then every 100th, so a stalled
++    // writer is visible in the log without flooding it.
++    void countDropLocked()
++    {
++        ++dropped_;
++        if (dropped_ == 1 || dropped_ % 100 == 0)
++        {
++            OPENAUTO_LOG(warning) << "[AurigaWriter] " << stream_ << " queue full, dropped "
++                                  << dropped_ << " chunk(s)";
++        }
++    }
++
++    std::string stream_;
++    Sink sink_;
++
++    mutable std::mutex mutex_;
++    std::condition_variable condition_;
++    std::deque<std::vector<uint8_t>> queue_;
++    uint64_t queuedBytes_;
++    uint64_t dropped_;
++    bool stopping_;
++    std::thread thread_;
++};
++
++}
++}
++}
++}
+diff --git a/include/f1x/openauto/autoapp/Projection/IAudioOutput.hpp b/include/f1x/openauto/autoapp/Projection/IAudioOutput.hpp
+index aaec03a..261f3c2 100644
+--- a/include/f1x/openauto/autoapp/Projection/IAudioOutput.hpp
++++ b/include/f1x/openauto/autoapp/Projection/IAudioOutput.hpp
+@@ -41,6 +41,9 @@ public:
+ 
+     virtual bool open() = 0;
+     virtual void write(aasdk::messenger::Timestamp::ValueType timestamp, const aasdk::common::DataConstBuffer& buffer) = 0;
++    // MEDIA_MESSAGE_CODEC_CONFIG does not carry PCM bytes; the capture sink
++    // ignores it instead of appending it to the WAV.
++    virtual void setCodecConfig(const aasdk::common::DataConstBuffer& buffer) { (void)buffer; }
+     virtual void start() = 0;
+     virtual void stop() = 0;
+     virtual void suspend() = 0;
+diff --git a/include/f1x/openauto/autoapp/Projection/IVideoOutput.hpp b/include/f1x/openauto/autoapp/Projection/IVideoOutput.hpp
+index ab93288..316e7a7 100644
+--- a/include/f1x/openauto/autoapp/Projection/IVideoOutput.hpp
++++ b/include/f1x/openauto/autoapp/Projection/IVideoOutput.hpp
+@@ -45,6 +45,10 @@ public:
+     virtual bool open() = 0;
+     virtual bool init() = 0;
+     virtual void write(aasdk::messenger::Timestamp::ValueType timestamp, const aasdk::common::DataConstBuffer& buffer) = 0;
++    // MEDIA_MESSAGE_CODEC_CONFIG: SPS/PPS, kept out of the media path. The
++    // capture sink writes it at the head of each segment; other backends ignore
++    // it because the decoder gets it out of band.
++    virtual void setCodecConfig(const aasdk::common::DataConstBuffer& buffer) { (void)buffer; }
+     virtual void stop() = 0;
+ 
+     virtual aap_protobuf::service::media::sink::message::VideoFrameRateType getVideoFPS() const = 0;
 diff --git a/include/f1x/openauto/autoapp/Service/ServiceFactory.hpp b/include/f1x/openauto/autoapp/Service/ServiceFactory.hpp
 index 7cf8500..85ad0c6 100644
 --- a/include/f1x/openauto/autoapp/Service/ServiceFactory.hpp
@@ -503,10 +794,10 @@ index 0000000..4b48c23
 +}
 diff --git a/src/autoapp/Projection/AurigaAudioOutput.cpp b/src/autoapp/Projection/AurigaAudioOutput.cpp
 new file mode 100644
-index 0000000..3b4f0f3
+index 0000000..6d11b1d
 --- /dev/null
 +++ b/src/autoapp/Projection/AurigaAudioOutput.cpp
-@@ -0,0 +1,213 @@
+@@ -0,0 +1,237 @@
 +/*
 +*  This file is part of openauto project.
 +*
@@ -563,6 +854,8 @@ index 0000000..3b4f0f3
 +    , sampleRate_(sampleRate)
 +    , dataBytes_(0)
 +    , lastHeaderUpdate_(0)
++    , accepting_(false)
++    , writer_(stream_, [this](const std::vector<uint8_t>& chunk) { this->writeChunk(chunk); })
 +{
 +}
 +
@@ -573,8 +866,6 @@ index 0000000..3b4f0f3
 +
 +bool AurigaAudioOutput::open()
 +{
-+    std::lock_guard<std::mutex> lock(mutex_);
-+
 +    if (file_.is_open())
 +    {
 +        return true;
@@ -584,12 +875,15 @@ index 0000000..3b4f0f3
 +    if (!file_.is_open())
 +    {
 +        OPENAUTO_LOG(error) << "[AurigaAudioOutput] cannot open " << path_;
++        accepting_ = false;
 +        return false;
 +    }
 +
 +    dataBytes_ = 0;
 +    lastHeaderUpdate_ = 0;
 +    this->writeHeader();
++    accepting_ = true;
++    writer_.start();
 +
 +    OPENAUTO_LOG(info) << "[AurigaAudioOutput] writing " << path_ << " ("
 +                       << sampleRate_ << " Hz, " << channelCount_ << " ch, "
@@ -597,32 +891,24 @@ index 0000000..3b4f0f3
 +    return true;
 +}
 +
++// Channel strand: copy only. The writer thread owns the file from here on.
 +void AurigaAudioOutput::write(aasdk::messenger::Timestamp::ValueType,
 +                              const aasdk::common::DataConstBuffer& buffer)
 +{
-+    std::lock_guard<std::mutex> lock(mutex_);
-+
-+    if (!file_.is_open())
++    if (!accepting_)
 +    {
 +        return;
 +    }
 +
-+    file_.write(reinterpret_cast<const char*>(buffer.cdata),
-+                static_cast<std::streamsize>(buffer.size));
-+    dataBytes_ += buffer.size;
++    writer_.append(buffer);
++}
 +
-+    if (dataBytes_ >= AurigaSessionManager::SEGMENT_LIMIT)
-+    {
-+        this->rotate();
-+        return;
-+    }
-+
-+    const uint64_t bytesPerSecond =
-+        static_cast<uint64_t>(sampleRate_) * channelCount_ * (sampleSize_ / 8);
-+    if (bytesPerSecond > 0 && dataBytes_ - lastHeaderUpdate_ >= bytesPerSecond)
-+    {
-+        this->updateHeader();
-+    }
++// MEDIA_MESSAGE_CODEC_CONFIG carries the PCM format, not media bytes; the WAV
++// header already describes the stream, so nothing is written into the file.
++void AurigaAudioOutput::setCodecConfig(const aasdk::common::DataConstBuffer& buffer)
++{
++    OPENAUTO_LOG(debug) << "[AurigaAudioOutput] codec config " << buffer.size
++                        << " bytes ignored (" << stream_ << " is raw PCM)";
 +}
 +
 +void AurigaAudioOutput::start()
@@ -631,14 +917,16 @@ index 0000000..3b4f0f3
 +
 +void AurigaAudioOutput::stop()
 +{
-+    std::lock_guard<std::mutex> lock(mutex_);
++    accepting_ = false;
++    writer_.stop();
 +
 +    if (file_.is_open())
 +    {
 +        this->updateHeader();
 +        file_.flush();
 +        file_.close();
-+        OPENAUTO_LOG(info) << "[AurigaAudioOutput] closed " << path_;
++        OPENAUTO_LOG(info) << "[AurigaAudioOutput] closed " << path_ << " ("
++                           << writer_.dropped() << " dropped)";
 +    }
 +}
 +
@@ -659,6 +947,32 @@ index 0000000..3b4f0f3
 +uint32_t AurigaAudioOutput::getSampleRate() const
 +{
 +    return sampleRate_;
++}
++
++// Writer thread.
++void AurigaAudioOutput::writeChunk(const std::vector<uint8_t>& chunk)
++{
++    if (!file_.is_open())
++    {
++        return;
++    }
++
++    file_.write(reinterpret_cast<const char*>(chunk.data()),
++                static_cast<std::streamsize>(chunk.size()));
++    dataBytes_ += chunk.size();
++
++    if (dataBytes_ >= AurigaSessionManager::SEGMENT_LIMIT)
++    {
++        this->rotate();
++        return;
++    }
++
++    const uint64_t bytesPerSecond =
++        static_cast<uint64_t>(sampleRate_) * channelCount_ * (sampleSize_ / 8);
++    if (bytesPerSecond > 0 && dataBytes_ - lastHeaderUpdate_ >= bytesPerSecond)
++    {
++        this->updateHeader();
++    }
 +}
 +
 +void AurigaAudioOutput::writeHeader()
@@ -697,6 +1011,7 @@ index 0000000..3b4f0f3
 +
 +// Segment rollover: the WAV restarts at 44 bytes with a fresh header and the
 +// manifest count advances, which is the stream server's signal to reopen it.
++// Writer thread.
 +void AurigaAudioOutput::rotate()
 +{
 +    file_.flush();
@@ -964,10 +1279,10 @@ index 0000000..ca9fcef
 +}
 diff --git a/src/autoapp/Projection/AurigaSession.cpp b/src/autoapp/Projection/AurigaSession.cpp
 new file mode 100644
-index 0000000..6c6aeaa
+index 0000000..ba0db47
 --- /dev/null
 +++ b/src/autoapp/Projection/AurigaSession.cpp
-@@ -0,0 +1,248 @@
+@@ -0,0 +1,285 @@
 +/*
 +*  This file is part of openauto project.
 +*
@@ -978,6 +1293,7 @@ index 0000000..6c6aeaa
 +*/
 +
 +#include <algorithm>
++#include <cstdlib>
 +#include <cstring>
 +#include <ctime>
 +#include <filesystem>
@@ -1000,6 +1316,37 @@ index 0000000..6c6aeaa
 +{
 +namespace projection
 +{
++
++// One env read for the whole process. `AURIGA_CAPTURE_DIR` must be non-empty:
++// an exported empty value is treated as capture mode off, not as a half-on
++// headless process.
++const std::string& captureDirectory()
++{
++    static const std::string dir = []() {
++        const char* value = std::getenv("AURIGA_CAPTURE_DIR");
++        if (value == nullptr || *value == '\0')
++        {
++            return std::string();
++        }
++
++        std::error_code error;
++        std::filesystem::create_directories(value, error);
++        if (error)
++        {
++            OPENAUTO_LOG(warning) << "[AurigaSession] cannot create capture dir " << value << ": "
++                                  << error.message();
++        }
++
++        return std::string(value);
++    }();
++
++    return dir;
++}
++
++bool captureModeEnabled()
++{
++    return !captureDirectory().empty();
++}
 +
 +namespace
 +{
@@ -1042,8 +1389,12 @@ index 0000000..6c6aeaa
 +
 +}
 +
-+AurigaSessionManager::AurigaSessionManager(std::string captureDir, std::size_t keepSessions)
++AurigaSessionManager::AurigaSessionManager(std::string captureDir, uint32_t width, uint32_t height,
++                                           double fps, std::size_t keepSessions)
 +    : captureDir_(std::move(captureDir))
++    , width_(width)
++    , height_(height)
++    , fps_(fps)
 +    , keepSessions_(keepSessions)
 +{
 +    std::error_code error;
@@ -1116,7 +1467,8 @@ index 0000000..6c6aeaa
 +void AurigaSessionManager::writeManifest()
 +{
 +    std::ostringstream json;
-+    json << "{\"session\":\"" << sessionId_ << "\"";
++    json << "{\"session\":\"" << sessionId_ << "\""
++         << ",\"width\":" << width_ << ",\"height\":" << height_ << ",\"fps\":" << fps_;
 +    for (const auto& entry : segments_)
 +    {
 +        json << ",\"" << entry.first << "\":" << entry.second;
@@ -1218,10 +1570,10 @@ index 0000000..6c6aeaa
 +}
 diff --git a/src/autoapp/Projection/AurigaVideoOutput.cpp b/src/autoapp/Projection/AurigaVideoOutput.cpp
 new file mode 100644
-index 0000000..08a5dbe
+index 0000000..453c81f
 --- /dev/null
 +++ b/src/autoapp/Projection/AurigaVideoOutput.cpp
-@@ -0,0 +1,117 @@
+@@ -0,0 +1,166 @@
 +/*
 +*  This file is part of openauto project.
 +*
@@ -1249,6 +1601,9 @@ index 0000000..08a5dbe
 +    , session_(std::move(session))
 +    , path_(session_->path("video.h264"))
 +    , segmentBytes_(0)
++    , segmentStarted_(false)
++    , accepting_(false)
++    , writer_("video", [this](const std::vector<uint8_t>& chunk) { this->writeChunk(chunk); })
 +{
 +}
 +
@@ -1259,8 +1614,6 @@ index 0000000..08a5dbe
 +
 +bool AurigaVideoOutput::open()
 +{
-+    std::lock_guard<std::mutex> lock(mutex_);
-+
 +    if (file_.is_open())
 +    {
 +        return true;
@@ -1270,10 +1623,15 @@ index 0000000..08a5dbe
 +    if (!file_.is_open())
 +    {
 +        OPENAUTO_LOG(error) << "[AurigaVideoOutput] cannot open " << path_;
++        accepting_ = false;
 +        return false;
 +    }
 +
 +    segmentBytes_ = 0;
++    segmentStarted_ = false;
++    accepting_ = true;
++    writer_.start();
++
 +    OPENAUTO_LOG(info) << "[AurigaVideoOutput] writing " << path_ << " (session "
 +                       << session_->sessionId() << ")";
 +    return true;
@@ -1284,20 +1642,74 @@ index 0000000..08a5dbe
 +    return true;
 +}
 +
++// Channel strand: copy only. The writer thread owns the file from here on.
 +void AurigaVideoOutput::write(aasdk::messenger::Timestamp::ValueType,
 +                              const aasdk::common::DataConstBuffer& buffer)
 +{
-+    std::lock_guard<std::mutex> lock(mutex_);
++    if (!accepting_)
++    {
++        return;
++    }
 +
++    writer_.append(buffer);
++}
++
++// MEDIA_MESSAGE_CODEC_CONFIG. Cached, never mixed into the media bytes; it is
++// written once at the head of the current or next segment.
++void AurigaVideoOutput::setCodecConfig(const aasdk::common::DataConstBuffer& buffer)
++{
++    if (buffer.cdata == nullptr || buffer.size == 0)
++    {
++        return;
++    }
++
++    std::lock_guard<std::mutex> lock(codecConfigMutex_);
++    codecConfig_.assign(buffer.cdata, buffer.cdata + buffer.size);
++
++    OPENAUTO_LOG(info) << "[AurigaVideoOutput] codec config " << codecConfig_.size()
++                       << " bytes (written at the head of the segment)";
++}
++
++void AurigaVideoOutput::stop()
++{
++    accepting_ = false;
++    writer_.stop();
++
++    if (file_.is_open())
++    {
++        file_.flush();
++        file_.close();
++        OPENAUTO_LOG(info) << "[AurigaVideoOutput] closed " << path_ << " ("
++                           << writer_.dropped() << " dropped)";
++    }
++}
++
++// Writer thread. Codec config goes in front of the first access unit of a
++// segment, so every segment starts with SPS/PPS.
++void AurigaVideoOutput::writeChunk(const std::vector<uint8_t>& chunk)
++{
 +    if (!file_.is_open())
 +    {
 +        return;
 +    }
 +
-+    file_.write(reinterpret_cast<const char*>(buffer.cdata),
-+                static_cast<std::streamsize>(buffer.size));
++    if (!segmentStarted_)
++    {
++        segmentStarted_ = true;
++
++        std::lock_guard<std::mutex> lock(codecConfigMutex_);
++        if (!codecConfig_.empty())
++        {
++            file_.write(reinterpret_cast<const char*>(codecConfig_.data()),
++                        static_cast<std::streamsize>(codecConfig_.size()));
++            segmentBytes_ += codecConfig_.size();
++        }
++    }
++
++    file_.write(reinterpret_cast<const char*>(chunk.data()),
++                static_cast<std::streamsize>(chunk.size()));
 +    file_.flush();
-+    segmentBytes_ += buffer.size;
++    segmentBytes_ += chunk.size();
 +
 +    if (segmentBytes_ >= AurigaSessionManager::SEGMENT_LIMIT)
 +    {
@@ -1305,26 +1717,15 @@ index 0000000..08a5dbe
 +    }
 +}
 +
-+void AurigaVideoOutput::stop()
-+{
-+    std::lock_guard<std::mutex> lock(mutex_);
-+
-+    if (file_.is_open())
-+    {
-+        file_.flush();
-+        file_.close();
-+        OPENAUTO_LOG(info) << "[AurigaVideoOutput] closed " << path_;
-+    }
-+}
-+
 +// Segment rollover: the same file restarts at offset 0 and the manifest count
-+// advances, which is the stream server's signal to reopen it.
++// advances, which is the stream server's signal to reopen it. Writer thread.
 +void AurigaVideoOutput::rotate()
 +{
 +    file_.flush();
 +    file_.close();
 +    file_.open(path_, std::ios::binary | std::ios::trunc);
 +    segmentBytes_ = 0;
++    segmentStarted_ = false;
 +
 +    if (!file_.is_open())
 +    {
@@ -1339,6 +1740,101 @@ index 0000000..08a5dbe
 +}
 +}
 +}
+diff --git a/src/autoapp/Service/MediaSink/AudioMediaSinkService.cpp b/src/autoapp/Service/MediaSink/AudioMediaSinkService.cpp
+index dfa9ec2..d7117eb 100644
+--- a/src/autoapp/Service/MediaSink/AudioMediaSinkService.cpp
++++ b/src/autoapp/Service/MediaSink/AudioMediaSinkService.cpp
+@@ -206,8 +206,9 @@ namespace f1x {
+             OPENAUTO_LOG(debug) << "[AudioMediaSinkService] onMediaWithTimestampIndication()";
+             OPENAUTO_LOG(debug) << "[AudioMediaSinkService] Channel Id: " << aasdk::messenger::channelIdToString(channel_->getId()) << ", session: " << session_;
+ 
+-            audioOutput_->write(timestamp, buffer);
+-
++            // ACK first. The sink's write only copies the buffer into a bounded
++            // in-memory queue, so the phone's flow-control window (max_unacked=1)
++            // never waits for the disk.
+             aap_protobuf::service::media::source::message::Ack indication;
+             indication.set_session_id(session_);
+             indication.set_ack(1);
+@@ -216,13 +217,28 @@ namespace f1x {
+             promise->then([]() {}, std::bind(&AudioMediaSinkService::onChannelError, this->shared_from_this(),
+                                              std::placeholders::_1));
+             channel_->sendMediaAckIndication(indication, std::move(promise));
++
++            audioOutput_->write(timestamp, buffer);
+             channel_->receive(this->shared_from_this());
+           }
+ 
++          // MEDIA_MESSAGE_CODEC_CONFIG describes the PCM format; it is not media
++          // bytes and must not be appended to the WAV.
+           void AudioMediaSinkService::onMediaIndication(const aasdk::common::DataConstBuffer &buffer) {
+-            OPENAUTO_LOG(info) << "[AudioMediaSinkService] onMediaIndication()";
++            OPENAUTO_LOG(info) << "[AudioMediaSinkService] onMediaIndication() codec config "
++                               << buffer.size << " bytes";
++
++            audioOutput_->setCodecConfig(buffer);
++
++            aap_protobuf::service::media::source::message::Ack indication;
++            indication.set_session_id(session_);
++            indication.set_ack(1);
+ 
+-            this->onMediaWithTimestampIndication(0, buffer);
++            auto promise = aasdk::channel::SendPromise::defer(strand_);
++            promise->then([]() {}, std::bind(&AudioMediaSinkService::onChannelError, this->shared_from_this(),
++                                             std::placeholders::_1));
++            channel_->sendMediaAckIndication(indication, std::move(promise));
++            channel_->receive(this->shared_from_this());
+           }
+ 
+ 
+diff --git a/src/autoapp/Service/MediaSink/VideoMediaSinkService.cpp b/src/autoapp/Service/MediaSink/VideoMediaSinkService.cpp
+index 53aba12..d620d58 100644
+--- a/src/autoapp/Service/MediaSink/VideoMediaSinkService.cpp
++++ b/src/autoapp/Service/MediaSink/VideoMediaSinkService.cpp
+@@ -174,8 +174,9 @@ namespace f1x {
+             OPENAUTO_LOG(debug) << "[VideoMediaSinkService] Channel Id: "
+                                << aasdk::messenger::channelIdToString(channel_->getId()) << ", session: " << session_;
+ 
+-            videoOutput_->write(timestamp, buffer);
+-
++            // ACK first. The sink's write only copies the buffer into a bounded
++            // in-memory queue, so the phone's flow-control window (max_unacked=1)
++            // never waits for the disk.
+             aap_protobuf::service::media::source::message::Ack indication;
+             indication.set_session_id(session_);
+             indication.set_ack(1);
+@@ -184,12 +185,29 @@ namespace f1x {
+             promise->then([]() {}, std::bind(&VideoMediaSinkService::onChannelError, this->shared_from_this(),
+                                              std::placeholders::_1));
+             channel_->sendMediaAckIndication(indication, std::move(promise));
++
++            videoOutput_->write(timestamp, buffer);
+             channel_->receive(this->shared_from_this());
+           }
+ 
++          // MEDIA_MESSAGE_CODEC_CONFIG: SPS/PPS travel separately from the media
++          // bytes. The sink caches them and writes them once at the head of each
++          // segment instead of mixing them into the frame stream.
+           void VideoMediaSinkService::onMediaIndication(const aasdk::common::DataConstBuffer &buffer) {
+-            OPENAUTO_LOG(debug) << "[VideoMediaSinkService] onMediaIndication()";
+-            this->onMediaWithTimestampIndication(0, buffer);
++            OPENAUTO_LOG(debug) << "[VideoMediaSinkService] onMediaIndication() codec config "
++                                << buffer.size << " bytes";
++
++            videoOutput_->setCodecConfig(buffer);
++
++            aap_protobuf::service::media::source::message::Ack indication;
++            indication.set_session_id(session_);
++            indication.set_ack(1);
++
++            auto promise = aasdk::channel::SendPromise::defer(strand_);
++            promise->then([]() {}, std::bind(&VideoMediaSinkService::onChannelError, this->shared_from_this(),
++                                             std::placeholders::_1));
++            channel_->sendMediaAckIndication(indication, std::move(promise));
++            channel_->receive(this->shared_from_this());
+           }
+ 
+           void VideoMediaSinkService::onChannelError(const aasdk::error::Error &e) {
 diff --git a/src/autoapp/Service/Sensor/SensorService.cpp b/src/autoapp/Service/Sensor/SensorService.cpp
 index f7368b6..978ca42 100644
 --- a/src/autoapp/Service/Sensor/SensorService.cpp
@@ -1362,21 +1858,21 @@ index f7368b6..978ca42 100644
      return ifile.good();
    }
 diff --git a/src/autoapp/Service/ServiceFactory.cpp b/src/autoapp/Service/ServiceFactory.cpp
-index 6c04ab2..16e0f9f 100644
+index 6c04ab2..521c911 100644
 --- a/src/autoapp/Service/ServiceFactory.cpp
 +++ b/src/autoapp/Service/ServiceFactory.cpp
 @@ -19,6 +19,10 @@
  #include <QApplication>
  #include <QScreen>
  
-+#include <cstdlib>
-+#include <filesystem>
++#include <cstdint>
 +#include <string>
++#include <utility>
 +
  #include <aasdk/Channel/MediaSink/Audio/Channel/MediaAudioChannel.hpp>
  #include <aasdk/Channel/MediaSink/Audio/Channel/SystemAudioChannel.hpp>
  #include <aasdk/Channel/MediaSink/Audio/Channel/GuidanceAudioChannel.hpp>
-@@ -44,11 +48,59 @@
+@@ -44,11 +48,72 @@
  #include <f1x/openauto/autoapp/Projection/QtAudioOutput.hpp>
  #include <f1x/openauto/autoapp/Projection/QtAudioInput.hpp>
  #include <f1x/openauto/autoapp/Projection/InputDevice.hpp>
@@ -1391,26 +1887,39 @@ index 6c04ab2..16e0f9f 100644
  namespace f1x::openauto::autoapp::service {
  
 +  namespace {
-+    // Capture mode is opt-in: setting AURIGA_CAPTURE_DIR switches the video,
-+    // audio, microphone and input backends to file/FIFO sinks. Without it,
-+    // OpenAuto behaves exactly as before.
-+    const std::string &captureDir() {
-+      static const std::string dir = []() {
-+        const char *value = std::getenv("AURIGA_CAPTURE_DIR");
-+        if (value == nullptr || *value == '\0') {
-+          return std::string();
-+        }
++    // The video geometry the phone is told to use is also the touch coordinate
++    // space and the manifest geometry, so it is derived from the configuration
++    // once and passed to both.
++    struct VideoGeometry {
++      uint32_t width;
++      uint32_t height;
++      double fps;
++    };
 +
-+        std::error_code error;
-+        std::filesystem::create_directories(value, error);
-+        if (error) {
-+          OPENAUTO_LOG(warning) << "[ServiceFactory] cannot create capture dir "
-+                                << value << ": " << error.message();
-+        }
-+        return std::string(value);
-+      }();
++    VideoGeometry configuredVideoGeometry(const configuration::IConfiguration::Pointer &configuration) {
++      VideoGeometry geometry{1280, 720, 30.0};
 +
-+      return dir;
++      switch (configuration->getVideoResolution()) {
++        case aap_protobuf::service::media::sink::message::VideoCodecResolutionType::VIDEO_1280x720:
++          geometry.width = 1280;
++          geometry.height = 720;
++          break;
++        case aap_protobuf::service::media::sink::message::VideoCodecResolutionType::VIDEO_1920x1080:
++          geometry.width = 1920;
++          geometry.height = 1080;
++          break;
++        default:
++          geometry.width = 800;
++          geometry.height = 480;
++          break;
++      }
++
++      if (configuration->getVideoFPS() ==
++          aap_protobuf::service::media::sink::message::VideoFrameRateType::VIDEO_FPS_60) {
++        geometry.fps = 60.0;
++      }
++
++      return geometry;
 +    }
 +
 +    projection::IAudioOutput::Pointer
@@ -1436,28 +1945,45 @@ index 6c04ab2..16e0f9f 100644
    ServiceFactory::ServiceFactory(boost::asio::io_service &ioService,
                                   configuration::IConfiguration::Pointer configuration)
        : ioService_(ioService), configuration_(std::move(configuration)) {
-@@ -59,6 +111,12 @@ namespace f1x::openauto::autoapp::service {
+@@ -59,6 +124,16 @@ namespace f1x::openauto::autoapp::service {
      OPENAUTO_LOG(info) << "[ServiceFactory] create()";
      ServiceList serviceList;
  
 +    // One capture session per AA entity: mint the id before any sink opens so
-+    // video, audio and input all write into the same directory.
-+    captureSession_ = captureDir().empty()
++    // video, audio and input all write into the same directory. The manifest
++    // publishes the geometry the phone is configured with.
++    const std::string &captureDir = projection::captureDirectory();
++    const VideoGeometry geometry = configuredVideoGeometry(configuration_);
++    captureSession_ = captureDir.empty()
 +                          ? nullptr
-+                          : std::make_shared<projection::AurigaSessionManager>(captureDir());
++                          : std::make_shared<projection::AurigaSessionManager>(
++                                captureDir, geometry.width, geometry.height, geometry.fps);
 +
      this->createMediaSinkServices(serviceList, messenger);
      this->createMediaSourceServices(serviceList, messenger);
      serviceList.emplace_back(this->createSensorService(messenger));
-@@ -111,11 +169,17 @@ namespace f1x::openauto::autoapp::service {
-         break;
-     }
+@@ -95,28 +170,22 @@ namespace f1x::openauto::autoapp::service {
  
--    QScreen *screen = QGuiApplication::primaryScreen();
--    QRect screenGeometry = screen == nullptr ? QRect(0, 0, 1, 1) : screen->geometry();
--    projection::IInputDevice::Pointer inputDevice(
--        std::make_shared<projection::InputDevice>(*QApplication::instance(), configuration_,
--                                                  std::move(screenGeometry), std::move(videoGeometry)));
+   IService::Pointer ServiceFactory::createInputService(aasdk::messenger::IMessenger::Pointer messenger) {
+     OPENAUTO_LOG(info) << "[ServiceFactory] createInputService()";
+-    QRect videoGeometry;
+-    switch (configuration_->getVideoResolution()) {
+-      case aap_protobuf::service::media::sink::message::VideoCodecResolutionType::VIDEO_1280x720:
+-        OPENAUTO_LOG(info) << "[ServiceFactory] Resolution 1280x720";
+-        videoGeometry = QRect(0, 0, 1280, 720);
+-        break;
+-      case aap_protobuf::service::media::sink::message::VideoCodecResolutionType::VIDEO_1920x1080:
+-        OPENAUTO_LOG(info) << "[ServiceFactory] Resolution 1920x1080";
+-        videoGeometry = QRect(0, 0, 1920, 1080);
+-        break;
+-      default:
+-        OPENAUTO_LOG(info) << "[ServiceFactory] Resolution 800x480";
+-        videoGeometry = QRect(0, 0, 800, 480);
+-        break;
++    const VideoGeometry geometry = configuredVideoGeometry(configuration_);
++    OPENAUTO_LOG(info) << "[ServiceFactory] Resolution " << geometry.width << "x" << geometry.height;
++    QRect videoGeometry(0, 0, static_cast<int>(geometry.width), static_cast<int>(geometry.height));
++
 +    projection::IInputDevice::Pointer inputDevice;
 +    if (captureSession_ != nullptr) {
 +      inputDevice = std::make_shared<projection::AurigaInputDevice>(
@@ -1468,11 +1994,18 @@ index 6c04ab2..16e0f9f 100644
 +      inputDevice = std::make_shared<projection::InputDevice>(
 +          *QApplication::instance(), configuration_, std::move(screenGeometry),
 +          std::move(videoGeometry));
-+    }
+     }
  
+-    QScreen *screen = QGuiApplication::primaryScreen();
+-    QRect screenGeometry = screen == nullptr ? QRect(0, 0, 1, 1) : screen->geometry();
+-    projection::IInputDevice::Pointer inputDevice(
+-        std::make_shared<projection::InputDevice>(*QApplication::instance(), configuration_,
+-                                                  std::move(screenGeometry), std::move(videoGeometry)));
+-
      return std::make_shared<inputsource::InputSourceService>(ioService_, messenger, std::move(inputDevice));
    }
-@@ -125,11 +189,7 @@ namespace f1x::openauto::autoapp::service {
+ 
+@@ -125,11 +194,7 @@ namespace f1x::openauto::autoapp::service {
      OPENAUTO_LOG(info) << "[ServiceFactory] createMediaSinkServices()";
      if (configuration_->musicAudioChannelEnabled()) {
        OPENAUTO_LOG(info) << "[ServiceFactory] Media Audio Channel enabled";
@@ -1485,7 +2018,7 @@ index 6c04ab2..16e0f9f 100644
  
        serviceList.emplace_back(
            std::make_shared<mediasink::MediaAudioService>(ioService_, messenger, std::move(mediaAudioOutput)));
-@@ -137,11 +197,7 @@ namespace f1x::openauto::autoapp::service {
+@@ -137,11 +202,7 @@ namespace f1x::openauto::autoapp::service {
  
      if (configuration_->guidanceAudioChannelEnabled()) {
        OPENAUTO_LOG(info) << "[ServiceFactory] Guidance Audio Channel enabled";
@@ -1498,7 +2031,7 @@ index 6c04ab2..16e0f9f 100644
  
        serviceList.emplace_back(
            std::make_shared<mediasink::GuidanceAudioService>(ioService_, messenger,
-@@ -167,11 +223,7 @@ namespace f1x::openauto::autoapp::service {
+@@ -167,11 +228,7 @@ namespace f1x::openauto::autoapp::service {
       */
  
      OPENAUTO_LOG(info) << "[ServiceFactory] System Audio Channel enabled";
@@ -1511,7 +2044,7 @@ index 6c04ab2..16e0f9f 100644
  
      serviceList.emplace_back(
          std::make_shared<mediasink::SystemAudioService>(ioService_, messenger, std::move(systemAudioOutput)));
-@@ -179,8 +231,14 @@ namespace f1x::openauto::autoapp::service {
+@@ -179,8 +236,14 @@ namespace f1x::openauto::autoapp::service {
  #ifdef USE_OMX
      auto videoOutput(std::make_shared<projection::OMXVideoOutput>(configuration_));
  #else
@@ -1528,14 +2061,14 @@ index 6c04ab2..16e0f9f 100644
  #endif
  
      OPENAUTO_LOG(info) << "[ServiceFactory] Video Channel enabled";
-@@ -191,8 +249,14 @@ namespace f1x::openauto::autoapp::service {
+@@ -191,8 +254,14 @@ namespace f1x::openauto::autoapp::service {
    void ServiceFactory::createMediaSourceServices(f1x::openauto::autoapp::service::ServiceList &serviceList,
                                                   aasdk::messenger::IMessenger::Pointer messenger) {
      OPENAUTO_LOG(info) << "[ServiceFactory] createMediaSourceServices()";
 -    projection::IAudioInput::Pointer audioInput(new projection::QtAudioInput(1, 16, 16000),
 -                                                std::bind(&QObject::deleteLater, std::placeholders::_1));
 +    projection::IAudioInput::Pointer audioInput;
-+    if (!captureDir().empty()) {
++    if (projection::captureModeEnabled()) {
 +      audioInput = std::make_shared<projection::AurigaAudioInput>(ioService_, 1, 16, 16000);
 +    } else {
 +      audioInput = projection::IAudioInput::Pointer(

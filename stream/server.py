@@ -196,8 +196,9 @@ class Streamer:
     def hello(self):
         """`hello` payload; geometry comes from the session's `manifest.json`.
 
-        The head unit does not publish width/height/fps yet, so the parser's
-        1280x720/30 defaults stand until it does.
+        The head unit publishes width/height/fps from its configured video
+        resolution; the parser's 1280x720/30 defaults only apply to a manifest
+        that is absent or carries no geometry.
         """
         return {
             "type": "hello",

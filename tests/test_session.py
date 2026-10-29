@@ -136,13 +136,28 @@ class ParseManifestTest(unittest.TestCase):
     def test_head_unit_field_order(self):
         # Byte-for-byte shape of the document AurigaSessionManager writes.
         manifest = parse_manifest(
-            '{"session":"20261029-090405","audio-guidance":0,"audio-media":0,'
-            '"audio-system":0,"video":1}\n'
+            '{"session":"20261029-090405","width":1280,"height":720,"fps":30,'
+            '"audio-guidance":0,"audio-media":0,"audio-system":0,"video":1}\n'
         )
         self.assertEqual(manifest.session, "20261029-090405")
+        self.assertEqual((manifest.width, manifest.height), (1280, 720))
+        self.assertEqual(manifest.fps, 30.0)
         self.assertEqual(manifest.segment_count("video"), 1)
         self.assertEqual(manifest.segment_count("audio-media"), 0)
-        self.assertEqual(manifest.width, DEFAULT_WIDTH)
+
+    def test_head_unit_publishes_configured_geometry(self):
+        # Video.Resolution=3 and Video.FPS=1 in openauto.ini: 1920x1080 at 60.
+        manifest = parse_manifest(
+            '{"session":"20261029-090405","width":1920,"height":1080,"fps":60,'
+            '"audio-guidance":0,"audio-media":0,"audio-system":0,"video":0}\n'
+        )
+        self.assertEqual((manifest.width, manifest.height), (1920, 1080))
+        self.assertEqual(manifest.fps, 60.0)
+
+    def test_head_unit_fractional_fps(self):
+        # The geometry mapping publishes a JSON number; 29.97 must survive.
+        manifest = parse_manifest('{"width":1280,"height":720,"fps":29.97}')
+        self.assertEqual(manifest.fps, 29.97)
 
 
 class CaptureDir:

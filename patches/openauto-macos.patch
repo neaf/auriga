@@ -1,45 +1,35 @@
 diff --git a/src/autoapp/App.cpp b/src/autoapp/App.cpp
-index 751c7cd..703ef42 100644
+index 751c7cd..1face61 100644
 --- a/src/autoapp/App.cpp
 +++ b/src/autoapp/App.cpp
-@@ -16,6 +16,7 @@
- *  along with openauto. If not, see <http://www.gnu.org/licenses/>.
- */
- 
-+#include <cstdlib>
- #include <thread>
+@@ -20,6 +20,7 @@
  #include <aasdk/USB/AOAPDevice.hpp>
  #include <aasdk/TCP/TCPEndpoint.hpp>
-@@ -24,6 +25,13 @@
+ #include <f1x/openauto/autoapp/App.hpp>
++#include <f1x/openauto/autoapp/Projection/AurigaSession.hpp>
+ #include <f1x/openauto/Common/Log.hpp>
  
  namespace f1x::openauto::autoapp {
- 
-+  // macOS AirPlay Receiver listens on TCP 5000, which OpenAuto uses for
-+  // Android Auto over Wi-Fi. The Auriga capture build is USB-only, so do not
-+  // claim that port (or accept TCP clients) when AURIGA_CAPTURE_DIR is set.
-+  static bool aurigaCaptureMode() {
-+    return std::getenv("AURIGA_CAPTURE_DIR") != nullptr;
-+  }
-+
-   App::App(boost::asio::io_service &ioService, aasdk::usb::USBWrapper &usbWrapper, aasdk::tcp::ITCPWrapper &tcpWrapper,
-            service::IAndroidAutoEntityFactory &androidAutoEntityFactory,
-            aasdk::usb::IUSBHub::Pointer usbHub,
-@@ -31,7 +39,8 @@ namespace f1x::openauto::autoapp {
+@@ -31,7 +32,12 @@ namespace f1x::openauto::autoapp {
        : ioService_(ioService), usbWrapper_(usbWrapper), tcpWrapper_(tcpWrapper), strand_(ioService_),
          androidAutoEntityFactory_(androidAutoEntityFactory), usbHub_(std::move(usbHub)),
          connectedAccessoriesEnumerator_(std::move(connectedAccessoriesEnumerator)),
 -        acceptor_(ioService, boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), 5000)), isStopped_(false) {
++        // macOS AirPlay Receiver listens on TCP 5000, which OpenAuto uses for AA
++        // over Wi-Fi. The Auriga capture build is USB-only, so it binds an
++        // ephemeral port instead and never accepts. Capture mode has one
++        // definition, in AurigaSession.cpp.
 +        acceptor_(ioService, boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(),
-+                                                           aurigaCaptureMode() ? 0 : 5000)), isStopped_(false) {
++                                                           projection::captureModeEnabled() ? 0 : 5000)), isStopped_(false) {
  
    }
  
-@@ -167,7 +176,9 @@ namespace f1x::openauto::autoapp {
+@@ -167,7 +173,9 @@ namespace f1x::openauto::autoapp {
      promise->then(std::bind(&App::aoapDeviceHandler, this->shared_from_this(), std::placeholders::_1),
                    std::bind(&App::onUSBHubError, this->shared_from_this(), std::placeholders::_1));
      usbHub_->start(std::move(promise));
 -    startServerSocket();
-+    if (!aurigaCaptureMode()) {
++    if (!projection::captureModeEnabled()) {
 +      startServerSocket();
 +    }
    }
