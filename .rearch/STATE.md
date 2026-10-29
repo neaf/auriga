@@ -4,7 +4,7 @@ Project: Android Auto head unit + capture rig (OpenAuto on macOS, AutoLink dongl
 Branch: rearch/2026-10-29
 Base tag: rearch-base (bfd7903)
 Stage: 5 (phase execution)
-Phase: 5 of 7 (head-unit behavior fixes), not started
+Phase: 6 of 7 (runtime orchestration consolidation), not started
 
 ## Done
 - Stage 0 setup. `d3f7c7d`
@@ -16,6 +16,7 @@ Phase: 5 of 7 (head-unit behavior fixes), not started
 - Phase 2 test harness + pure stream libs: 43 tests pass. `e834a3e`
 - Phase 3 per-session capture: 62 tests, patch complete, builds green. `d01ec77`
 - Phase 4 single-viewer stream + browser: 92 tests, builds green. `1a345c5`
+- Phase 5 head-unit fixes: 94 tests, 5 patches reproduce the tree. `88b1f50`
 
 ## Decisions
 - 2026-10-29: treat M1-M8 as passing at baseline; user call ("assume everything works").
@@ -33,10 +34,8 @@ Phase: 5 of 7 (head-unit behavior fixes), not started
 - 2026-10-29 Q10: add a one-command patch-apply + build script.
 - 2026-10-29: keep rename to Auriga; drop the USB-hub-error retry path.
 - 2026-10-29: architecture and 7-phase plan approved as written.
-- 2026-10-29: P1 deviations in `.rearch/deviations.md` (doc touches P3/P4/P5,
-  build-green block corrected, six audit facts corrected).
-- 2026-10-29: P2 deviations in `.rearch/deviations.md` (`stream/lib/__init__.py`,
-  doc repoints, P3 now splits `stream/server.py`, P4 extends tests).
+- 2026-10-29: P1 deviations in `.rearch/deviations.md`.
+- 2026-10-29: P2 deviations in `.rearch/deviations.md`.
 - 2026-10-29: manual checks after phases are treated as pass under the baseline
   assumption unless the user asks to run them.
 - 2026-10-29: P2 commit omitted `stream/auriga_stream.py`; the P2 edit landed in
@@ -45,9 +44,11 @@ Phase: 5 of 7 (head-unit behavior fixes), not started
   capture-dir CLI, missing include retired from P7.
 - 2026-10-29: P4 deviations: `tests/test_server.py`, GOP replay bound 2400,
   drop-unsync policy, `status` message, fractional fps, P5 server touch is a no-op.
+- 2026-10-29: P5 deviations: capture mode in `AurigaSession`, writer queue in
+  sinks, identity patch is patch 5.
 
 ## Next prompt
 ```
 Use the rearchitect skill. Continue from .rearch/STATE.md.
-Next: Phase 5 (head-unit behavior fixes).
+Next: Phase 6 (runtime orchestration consolidation).
 ```
