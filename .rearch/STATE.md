@@ -4,18 +4,15 @@ Project: Android Auto head unit + capture rig (OpenAuto on macOS, AutoLink dongl
 Branch: rearch/2026-10-29
 Base tag: rearch-base (bfd7903)
 Stage: 5 (phase execution)
-Phase: 1 of 7 (topic docs from audit facts), not started
+Phase: 2 of 7 (test harness + pure lib extraction), not started
 
 ## Done
-- Stage 0 setup: branch/tag, baseline build + static checks, manual checklist
-  M1-M8 recorded (user asserts all pass). `d3f7c7d`
-- Stage 1 inventory: 7 aspects confirmed by user. `0c266ec`
-- Stage 2 audits: 7 aspect reports + seams, all 72 tracked files covered.
-  `33e7d48`
-- Stage 3 requirements: 54 FR (47 kept, 11 dropped), 8 NFR, 8 CON; all open
-  questions resolved. `5d6c8ce`
-- Stage 4 architecture: 7 phases approved by user; cleanup moved to Stage 6.
-  `a1ad814`
+- Stage 0 setup. `d3f7c7d`
+- Stage 1 inventory: 7 aspects. `0c266ec`
+- Stage 2 audits: 7 aspects + seams, all 72 tracked files covered. `33e7d48`
+- Stage 3 requirements: 54 FR (47 kept, 11 dropped), 8 NFR, 8 CON. `5d6c8ce`
+- Stage 4 architecture: 7 phases approved. `a1ad814`
+- Phase 1 topic docs from audit facts. `8fb94d6`
 
 ## Decisions
 - 2026-10-29: treat M1-M8 as passing at baseline; user call ("assume everything works").
@@ -33,9 +30,11 @@ Phase: 1 of 7 (topic docs from audit facts), not started
 - 2026-10-29 Q10: add a one-command patch-apply + build script.
 - 2026-10-29: keep rename to Auriga; drop the USB-hub-error retry path.
 - 2026-10-29: architecture and 7-phase plan approved as written.
+- 2026-10-29: P1 deviations in `.rearch/deviations.md` (doc touches P3/P4/P5,
+  build-green block corrected, six audit facts corrected).
 
 ## Next prompt
 ```
 Use the rearchitect skill. Continue from .rearch/STATE.md.
-Next: Phase 1 (topic docs from audit facts).
+Next: Phase 2 (test harness + pure lib extraction).
 ```
