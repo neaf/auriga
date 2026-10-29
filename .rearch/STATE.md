@@ -4,7 +4,7 @@ Project: Android Auto head unit + capture rig (OpenAuto on macOS, AutoLink dongl
 Branch: rearch/2026-10-29
 Base tag: rearch-base (bfd7903)
 Stage: 5 (phase execution)
-Phase: 2 of 7 (test harness + pure lib extraction), not started
+Phase: 3 of 7 (capture session model), not started
 
 ## Done
 - Stage 0 setup. `d3f7c7d`
@@ -13,6 +13,7 @@ Phase: 2 of 7 (test harness + pure lib extraction), not started
 - Stage 3 requirements: 54 FR (47 kept, 11 dropped), 8 NFR, 8 CON. `5d6c8ce`
 - Stage 4 architecture: 7 phases approved. `a1ad814`
 - Phase 1 topic docs from audit facts. `8fb94d6`
+- Phase 2 test harness + pure stream libs: 43 tests pass. `e834a3e`
 
 ## Decisions
 - 2026-10-29: treat M1-M8 as passing at baseline; user call ("assume everything works").
@@ -32,9 +33,13 @@ Phase: 2 of 7 (test harness + pure lib extraction), not started
 - 2026-10-29: architecture and 7-phase plan approved as written.
 - 2026-10-29: P1 deviations in `.rearch/deviations.md` (doc touches P3/P4/P5,
   build-green block corrected, six audit facts corrected).
+- 2026-10-29: P2 deviations in `.rearch/deviations.md` (`stream/lib/__init__.py`,
+  doc repoints, P3 now splits `stream/server.py`, P4 extends tests).
+- 2026-10-29: manual checks after phases are treated as pass under the baseline
+  assumption unless the user asks to run them.
 
 ## Next prompt
 ```
 Use the rearchitect skill. Continue from .rearch/STATE.md.
-Next: Phase 2 (test harness + pure lib extraction).
+Next: Phase 3 (capture session model).
 ```
