@@ -12,10 +12,10 @@ directly).
 | State | VID:PID | Host view | Handling |
 | --- | --- | --- | --- |
 | MTP, idle before the switch | `2717:ff40` | Xiaomi MTP, product `AutoLink` | The only device sent the AOA chain (`openauto/src/autoapp/autoapp.cpp:245-246`) |
-| AOA after the switch | `18d1:2d00` | Google AOA | Claimed as the head-unit target (`aasdk-upstream/src/USB/USBHub.cpp:84-87`) |
-| AOA+ADB, a phone | `18d1:2d01` | Google AOA with ADB | Refused when a source filter is set (`aasdk-upstream/src/USB/USBHub.cpp:121-127`) |
-| MTP+ADB, the phone | `04e8:6860` | Samsung MTP+ADB | Never touched: neither the source filter nor AOA (`USBHub.cpp:115`) |
-| CarPlay | `05ac:12a8` | Apple | Neither matched, ignored without a log (`USBHub.cpp:89-96,115`) |
+| AOA after the switch | `18d1:2d00` | Google AOA | Claimed as the head-unit target (`aasdk-upstream/src/USB/USBHub.cpp:134-136`) |
+| AOA+ADB, a phone | `18d1:2d01` | Google AOA with ADB | Refused when a source filter is set (`aasdk-upstream/src/USB/USBHub.cpp:121-125`) |
+| MTP+ADB, the phone | `04e8:6860` | Samsung MTP+ADB | Never touched: neither the source filter nor AOA (`USBHub.cpp:115-117`) |
+| CarPlay | `05ac:12a8` | Apple | Neither matched, ignored without a log (`USBHub.cpp:89-98,115-117`) |
 
 `2717` is the Xiaomi vendor ID that the dongle reuses; it is not a dongle
 property (`tools/aoa_probe.py`, `VID`). The IDs are observed on this host with
@@ -23,7 +23,7 @@ property (`tools/aoa_probe.py`, `VID`). The IDs are observed on this host with
 facts beyond observation.
 
 Only `18d1:2d01` is refused among AOA devices. Any device that enumerates as
-`18d1:2d00` is claimed regardless of vendor (`USBHub.cpp:84-87`).
+`18d1:2d00` is claimed regardless of vendor (`USBHub.cpp:134-136`).
 
 ## AOA switch
 
@@ -78,8 +78,8 @@ include path to `aap_protobuf` (`docs/Build.md#aasdk`).
 
 ## MTP config store
 
-Flat files with dynamic MTP IDs; `btapp.bk` is absent on the dongle today, so
-seven slots are populated.
+Flat files with dynamic MTP IDs; `btapp.bk` and `800x480-A512.h264` are absent on
+the dongle today, so six of the eight slots are populated.
 
 | File | Size | Current value | Backup |
 | --- | ---: | --- | --- |
@@ -143,17 +143,17 @@ keys.
 | `0x72` | 8 bytes | `1493 _0\0`; zero in `galaxy` | session tag |
 | `0x168` | u32 | `4e2d347c` (`orig`), `5e205bfd` (`car-trip`), `576e7e45` (`galaxy`) | unknown, `unverified` |
 
-`videoInfo.car-trip` differs from `videoInfo.orig` in 4 SPS bytes
-(`0x1e..0x21`), the PPS level byte at `0x2e`, the `0x0c` field, the 10-byte
-head-unit name (`0x68..0x71`) and the u32 at `0x168`. It records a real car head
-unit (`T  M918500`), not the bench config.
+`videoInfo.car-trip` differs from `videoInfo.orig` in four SPS bytes
+(`0x1f..0x22`, inside the SPS at `0x16`), the PPS level byte at `0x2e`, the
+`0x0c` field, the 10-byte head-unit name (`0x68..0x71`) and the u32 at `0x168`.
+It records a real car head unit (`T  M918500`), not the bench config.
 
 ### Backup inventory
 
 | File | Size | Status |
 | --- | ---: | --- |
 | `dongle-backup/videoInfo.orig` | 364 B | valid bench config: OPPO address, `auriga-pi`, Baseline 3.2 SPS/PPS |
-| `dongle-backup/videoInfo.car-trip` | 364 B | valid car-trip snapshot (the former `posttrip/videoInfo.post` duplicate is deleted with `posttrip/`) |
+| `dongle-backup/videoInfo.car-trip` | 364 B | valid car-trip snapshot; `posttrip/videoInfo.post` is a tracked byte-identical duplicate |
 | `dongle-backup/videoInfo.galaxy` | 364 B | invalid: `0x04` and `0x08` are 0, `0x12..0x4f` are 0 (no start codes, no SPS, no PPS), `0x72..0x79` are 0. Do not restore |
 | `dongle-backup/videoInfo.galaxy.active` | 364 B | byte-identical to `videoInfo.galaxy`, so also invalid |
 | `dongle-backup/btapp.db.galaxy-fresh` | 33 B | current pairing DB; sha256 `f6b4b7e6…`; current but `unverified` |
@@ -216,9 +216,9 @@ Symptom: the dongle never appears as `2717:ff40`; `autoapp` waits forever and
 nothing logs the mode.
 Cause: the dongle latches to `05ac:12a8` when an iPhone is on the air; the
 source filter matches only `2717:ff40` and `isAOAPDevice` matches only `18d1`,
-so `handleDevice` returns without logging (`USBHub.cpp:100-117`).
+so `handleDevice` returns without logging (`USBHub.cpp:100-125`).
 Workaround: replug with the iPhone off. No software path recovers it.
-Location: `patches/aasdk-usb-filter.patch`, `USBHub.cpp:89-96`.
+Location: `patches/aasdk-usb-filter.patch`, `USBHub.cpp:89-98`.
 Whether the latch is reachable without an iPhone is `unverified`.
 
 ### Idle re-enumeration
@@ -250,6 +250,6 @@ Symptom: an invalid `videoInfo` upload is accepted and only fails later at video
 setup.
 Cause: nothing validates the file; every safeguard is prose in a README.
 Workaround: check magic `03 07 24 20`, width 1280 at `0x04`, height 720 at
-`0x08`, a start code at `0x12`, PPS at `0x27` and a non-zero phone address at
-`0x54` before uploading. The checks are the procedure; nothing in the repo runs
-them.
+`0x08`, a start code at `0x12`, a start code at `0x27` followed by the PPS at
+`0x2b` (`68 ce 06 e2`), and a non-zero phone address at `0x54` before uploading.
+The checks are the procedure; nothing in the repo runs them.

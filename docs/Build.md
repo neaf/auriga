@@ -211,7 +211,7 @@ Symptom: a non-capture `autoapp` cannot bind its listener.
 Cause: macOS ControlCenter (AirPlay Receiver) listens on TCP 5000; OpenAuto's
 AA-over-Wi-Fi listener wants the same port.
 Workaround: run in capture mode. `AURIGA_CAPTURE_DIR` makes `App` bind port 0
-and skip `startServerSocket()` (`openauto/src/autoapp/App.cpp:40-41,182-184`).
+and skip `startServerSocket()` (`openauto/src/autoapp/App.cpp:39-40,182-184`).
 The acceptor is still constructed and listening on an ephemeral port on all
 interfaces; it never accepts.
 

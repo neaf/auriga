@@ -64,13 +64,13 @@ Location: `include/aasdk/Version.hpp` (`AASDK_MAJOR`/`AASDK_MINOR`),
 `autoapp` constructs `USBHub` with vendor `0x2717`, product `0xFF40`
 (`openauto/src/autoapp/autoapp.cpp:245-246`). `USBHub::handleDevice` ignores
 every non-AOA device except that pair and refuses `18d1:2d01`
-(`aasdk-upstream/src/USB/USBHub.cpp:100-133`). The dongle is the only device ever
+(`aasdk-upstream/src/USB/USBHub.cpp:115-136`). The dongle is the only device ever
 switched to AOA; its USB identity table is in `docs/AutoLink A512 dongle.md`.
 
 Hotplug is registered with `LIBUSB_HOTPLUG_ENUMERATE` and
-`LIBUSB_HOTPLUG_MATCH_ANY` (`USBHub.cpp:43-51`): the flag reports devices
+`LIBUSB_HOTPLUG_MATCH_ANY` (`USBHub.cpp:47-52`): the flag reports devices
 already on the bus at registration time, and the callback is registered once per
-`start()` and removed only by `cancel()` (`USBHub.cpp:52-66`). A device that
+`start()` (`:45-55`) and removed only by `cancel()` (`:57-72`). A device that
 appears while no callback is registered is not seen. A non-AOAP source match
 costs a fixed 1 s sleep inside the strand before the query chain starts
 (`USBHub.cpp:139`).
@@ -294,12 +294,23 @@ gets `STATUS_SUCCESS`, `already_paired=false`, then authentication data with PIN
 
 ### First AA entity fails with `AASDK Error 10`
 
-Symptom: the first entity after a start dies with `AASDK Error: 10` (native 1 or
-2) before `Version Received`; OpenAuto reconnects and the next entity projects.
-Cause: `unverified`. The failure happens before any Bluetooth pairing request can
-occur, so the dongle cannot have rejected a pairing at that point. The first
-entity's USB transfer fails on the dongle side; the trigger is not identified in
-the log.
+Symptom: the first entity after a start dies with `AASDK Error: 10` (native code
+1 or 2); OpenAuto quits it, reconnects, and the next entity projects. The stored
+logs show two shapes, and the failure is not tied to one stage:
+
+- during setup, before `Version Received`: the services have started and the
+  channel errors arrive with no version response
+  (`logs/openauto-mac-20261029-074101.log:55-65`, native code 1);
+- after full negotiation: version response, SSL handshake, service discovery and
+  channel setup all succeed, a Bluetooth pairing request and
+  `sendBluetoothAuthenticationData` happen, and the first channel error is
+  `MEDIA_SINK_VIDEO` immediately after `onMediaChannelStartIndication`
+  (`logs/openauto-mac-20261029-072459.log:57` version, `:128-133` pairing and
+  authentication data, `:137-148` the error burst).
+
+Cause: `unverified`. Neither shape names a trigger: the setup shape shows no
+Bluetooth activity at all, and the negotiated shape does not show what the dongle
+rejected. The dongle-side USB transfer fails; the log stops there.
 Workaround: let OpenAuto reconnect; if the dongle stays in AOA, replug it.
 Location: `logs/openauto-mac-*.log`; `App.cpp` (`onAndroidAutoQuit`,
 `waitForDevice`).
@@ -339,6 +350,19 @@ entity-creation path. `noteRotation` rewrites `manifest.json` from the sink's
 writer thread, at most once per 4 GiB per stream (`AurigaSession.cpp`;
 `AurigaVideoOutput.cpp`, `AurigaAudioOutput.cpp`).
 
+### A media sink reopened after `stop()` writes nothing
+
+Symptom: a second channel open on an entity that already stopped its media sink
+reports success and the segment file stays empty.
+Cause: `AurigaWriter::start()` returns without spawning a writer thread once
+`stopping_` is set (`AurigaWriter.hpp`), while `AurigaVideoOutput::open()` and
+`AurigaAudioOutput::open()` still return `true`; the media then queues and is
+never written. Whether any AA entity reopens a media channel after shutdown is
+`unverified`: no log shows it, and the entity is recreated per session.
+Workaround: one entity per pair; restart the pair instead of reusing an entity.
+Location: `AurigaWriter.hpp` (`start`, `append`), `AurigaVideoOutput.cpp`,
+`AurigaAudioOutput.cpp` (`open`).
+
 ## AA stream format
 
 Measured on `captures/2026-10-28-macos-session2-video.h264` (ffprobe + NAL scan):
@@ -376,14 +400,16 @@ aasdk's CMake). aasdk never inspects or logs the peer certificate.
 
 | Verb | Effect |
 | --- | --- |
-| `start` | creates the FIFO and its writer (reaping stale writers first), starts `autoapp` (offscreen capture), starts the stream server with the configured ports, polls the HTTP and WS listeners, starts `caffeinate`, writes the lock, opens the browser |
+| `start` | creates the FIFO and its writer (reaping stale writers first), starts `autoapp` (offscreen capture), starts the stream server with the configured ports, polls the HTTP and WS listeners, waits up to `AURIGA_SESSION_TIMEOUT` for the first AA session, starts `caffeinate`, writes the lock, opens the browser |
 | `status` | pids of `autoapp` and the stream server, both listening ports, the `current` session; exits non-zero unless both run |
 | `stop` | SIGTERM to the pids in the lock (cmdline-checked), waits, SIGKILLs, `pkill` for `autoapp`/stream/FIFO-writer orphans, removes the FIFO and the lock |
 
 - The lock is `<capture-dir>/.auriga.lock`, one `role pid` line per component.
   `start` refuses while a live pid is in it, and refuses a running `autoapp` of
-  the same build. That is the one-pair-per-capture-dir guarantee; `pgrep` is
-  only a fallback for orphans left by a lost lock file.
+  the same build. The exclusive scope is the host, not one capture directory:
+  when the lock names no live process, `start` still falls back to a host-wide
+  `pgrep` for `autoapp` and the stream server and refuses on either match. The
+  lock is written after readiness, so it names a pair that came up.
 - `AURIGA_CAPTURE_DIR` (default `<repo>/captures-mac`),
   `AURIGA_INPUT_FIFO` (default `/tmp/auriga-in`), `AURIGA_HTTP_PORT` (8080) and
   `AURIGA_WS_PORT` (8081) are resolved once in `scripts/auriga.sh` and exported
@@ -394,6 +420,13 @@ aasdk's CMake). aasdk never inspects or logs the peer certificate.
 - Readiness is a poll of both listen sockets (`nc -z`, 20 s,
   `AURIGA_READY_TIMEOUT`). A stream server that dies, for example on
   `EADDRINUSE`, is reported with its log tail instead of a "started" banner.
+- Sockets are not an AA session: with the dongle still at `Waiting for device...`
+  both listeners are up and the canvas stays blank. `start` therefore also waits
+  up to `AURIGA_SESSION_TIMEOUT` (10 s) for a `<capture-dir>/current` target that
+  differs from the one seen before the start (a pointer left by an earlier run is
+  not this run's session) and prints either the session name or
+  `session: none yet`; the wait never fails the start, because starting before
+  the phone connects is legitimate.
 - The FIFO writer is one long-lived `sleep` holding the write side open; EOF
   would stop the input reader for the rest of the run. A writer left over from a
   previous run is killed before the FIFO is recreated, so it cannot hold the old

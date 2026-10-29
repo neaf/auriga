@@ -143,15 +143,25 @@ class Viewer:
                 if kind != wanted:
                     continue
                 del self.messages[index]
-                self.dropped += 1
+                self._count_drop()
                 if wanted == "video":
                     self.synced = False
                 return
         if not self.messages:
             return
         self.messages.popleft()
-        self.dropped += 1
+        self._count_drop()
         self.synced = False
+
+    def _count_drop(self):
+        self.dropped += 1
+        # A queue overflow is the mechanism behind a frozen picture, so it is
+        # logged, not only counted: the first one and then every 100th.
+        if self.dropped == 1 or self.dropped % 100 == 0:
+            print(
+                "stream: viewer queue full, dropped %d message(s)" % self.dropped,
+                flush=True,
+            )
 
     async def run(self):
         while not self.closed:
@@ -327,6 +337,20 @@ class Streamer:
                 handle.seek(0, os.SEEK_END)
             return handle
 
+    async def resync_viewer(self):
+        """Configure the page again and hand it a decodable keyframe.
+
+        A `hello` tears the page's decoder down (`app.js` `configureVideo` sets
+        `needKey`), so after a codec change the viewer is unsynced by definition.
+        Replaying the cached GOP from its keyframe resynchronises it now instead
+        of leaving it to the encoder's next IDR (~60 s on the AA stream).
+        """
+        if self.viewer is not None:
+            self.viewer.clear_video()
+        self.send_hello()
+        if self.viewer is not None:
+            await self.replay(self.viewer)
+
     async def video_loop(self):
         # `current` appears when the head unit mints the first session; wait for
         # it instead of failing at startup.
@@ -364,7 +388,12 @@ class Streamer:
                     self.codec_stale = False
                     if sps != self.sps or pps != self.pps:
                         self.apply_codec(sps, pps)
-                        self.send_hello()
+                        print(
+                            "stream: codec changed, replaying %d cached frame(s)"
+                            % (len(self.gop),),
+                            flush=True,
+                        )
+                        await self.resync_viewer()
 
             if self.description is None and self.refresh_codec():
                 self.send_hello()

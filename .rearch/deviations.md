@@ -292,3 +292,60 @@
   `build-aasdk-mac`/`build-openauto-mac` incrementally and ran the tests; the
   running `autoapp`/stream pair was not stopped or restarted, so no M-check was
   re-run.
+
+- **P9 (extra, Stage 6 re-audit fixes): the four named items.**
+  `tools/aoa_read.py` builds its endpoint banner in `describe_endpoints` (the
+  conditional sat inside an f-string format spec, so the tool raised on both
+  paths); `tests/test_aoa_read.py` drives `main()` against a stub `usb` module
+  (pyusb is a `.venv`-only extra), including the no-OUT-endpoint and timeout
+  paths. A codec-change `hello` now goes through `Streamer.resync_viewer`:
+  queued video dropped, `hello`, cached GOP replayed, so the page resyncs on a
+  keyframe instead of waiting ~60 s for the encoder IDR; `app.js` also asks for
+  the replay on any delta it has no keyframe for, rate-limited to one request a
+  second so an empty cache cannot become a per-frame request storm. The
+  `AASDK Error 10` section now states the two shapes the logs show (setup, before
+  `Version Received`, `074101.log:55-65`; after full negotiation and a BT
+  pairing exchange, `072459.log:57,128-133,137-148`) with the cause still
+  `unverified`, and `DEVELOPING.md` no longer blames the pairing request.
+  `docs/AutoLink A512 dongle.md` SPS diff range `0x1f..0x22`, PPS at `0x2b`, six
+  populated slots (verified with `cmp -l` and the slot table).
+
+- **P9: readiness now checks the AA session.** `scripts/auriga.sh` gained
+  `current_session`/`wait_session` (`AURIGA_SESSION_TIMEOUT`, 10 s) after the two
+  socket polls and a `session:` line in the summary, so a dongle at
+  `Waiting for device...` is reported as `session: none yet` instead of "up" with
+  a blank canvas. `wait_session` compares against the `current` target seen
+  before the start, so a pointer left by an earlier run cannot pass for this
+  run's session. The wait does not fail the start: starting before the phone
+  connects is legitimate. `stop` also lost the `/tmp/auriga-mac-*.pid` /
+  `/tmp/auriga-fifo-writer.pid` deletions, which nothing creates.
+
+- **P9: sink reopened after `stop()` left as a known limitation.** headunit B3
+  needs `AurigaWriter::start()` to report failure (or a sink-level `stopped_`
+  flag) plus `open()` returning `false`, i.e. a patch regeneration of
+  `openauto-capture.patch`, and the behaviour depends on an unproven AA
+  assumption (no log shows an entity reopening a media channel after
+  `VideoMediaSinkService::stop()`, and a wrong `false` could turn a harmless
+  no-op into a fatal entity error). Recorded as a quirk in
+  `docs/Android Auto head unit.md` (sink reopened after `stop()`) with the
+  evidence and the workaround instead of a code change.
+
+- **P9: other re-audit lows fixed in passing.** `Viewer._make_room` now logs the
+  first and every 100th queue drop (it was only a counter the tests read);
+  `app.js` reconnects after a socket `error` that is not followed by `close`
+  (guarded by `ws === socket` so a late `error` cannot open a second socket);
+  `DEVELOPING.md` attributes `ServiceFactory.cpp` to `openauto-capture.patch`;
+  the `USBHub.cpp`/`App.cpp` line references in the dongle doc, the AA doc and
+  `docs/Build.md` were corrected against the trees; AGENTS.md gains the
+  host-wide lock scope and the `captures-mac/current` "no session yet" caveat.
+  `.rearch/requirements.md` FR-RUN-01, FR-STR-07 and NFR-07 follow the new
+  behaviour.
+
+- **P9: deliberately not changed.** runtime B1 (the live pair is the pre-rework
+  stack) is rig state, not code, and this phase must not stop or restart the
+  pair; `README.md` stays Stage 6's rewrite; `stream/README.md` keeps its Pi-era
+  text (Stage 6 folds it) and does not contradict the codec-change or reconnect
+  behaviour; `4001` still latches the page (one-viewer contract, Q4); the
+  duplicated `if __package__` import block stays (it serves the script and the
+  package import paths); `logs/` rotation, the `mintSessionId` 99-suffix cap,
+  the empty-`patches/` glob message and unvalidated `-d`/`-j` are unchanged.

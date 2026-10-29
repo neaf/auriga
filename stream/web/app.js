@@ -10,6 +10,7 @@ const WS_PORT = 8081;           // fallback; the server's config.json is authori
 const REPLACED_CODE = 4001;      // close code: another tab took the stream
 const GAP_US = 250000;           // a jump this large means frames were dropped
 const MAX_QUEUE = 2400;          // hard cap on chunks pending in the decoder
+const KEYFRAME_MIN_INTERVAL = 1000; // ms; a request storm cannot resync faster
 
 let ws = null;
 let wsPort = WS_PORT;
@@ -17,6 +18,7 @@ let decoder = null;
 let configured = false;
 let needKey = true;              // drop deltas until the next keyframe
 let keyframePending = false;
+let lastKeyframeAt = 0;          // performance.now() of the last replay request
 let replaced = false;
 let audioCtx = null;
 let muted = true;
@@ -75,7 +77,14 @@ function connect() {
     setStatus("disconnected, retrying…");
     setTimeout(connect, 2000);
   };
-  socket.onerror = () => setStatus("websocket error");
+  socket.onerror = () => {
+    setStatus("websocket error");
+    // A browser that fires `error` without `close` leaves the page dead; treat it
+    // as a close, but only while this socket is still the current one.
+    if (ws !== socket) return;
+    closeSocket();
+    setTimeout(connect, 2000);
+  };
   socket.onmessage = (event) => {
     if (typeof event.data === "string") {
       let message;
@@ -182,6 +191,11 @@ function draw(frame) {
 // and always decodable (`docs/Stream protocol.md`, keyframe request).
 function requestKeyframe() {
   if (replaced || keyframePending) return;
+  // An unconfigured decoder sees every delta as a miss; once a second is enough
+  // to reach a replay and keeps that from becoming a request per frame.
+  const now = performance.now();
+  if (now - lastKeyframeAt < KEYFRAME_MIN_INTERVAL) return;
+  lastKeyframeAt = now;
   teardownDecoder();
   needKey = true;
   lastVideoTs = null;
@@ -203,6 +217,10 @@ function handleBinary(buffer) {
     if (key) {
       needKey = false;
     } else if (needKey) {
+      // No decoder state to apply the delta to (a codec-change `hello`, or a
+      // fresh socket); waiting for the encoder's next IDR takes ~60 s, so ask
+      // for the cached GOP instead.
+      requestKeyframe();
       return;
     } else if (lastVideoTs !== null && timestamp - lastVideoTs > GAP_US) {
       droppedFrames++;

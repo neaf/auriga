@@ -5,12 +5,14 @@ whole path runs on the asyncio loop without a browser or a `websockets` server.
 """
 
 import asyncio
+import io
 import json
 import os
 import struct
 import tempfile
 import unittest
 import urllib.request
+from contextlib import redirect_stdout
 from pathlib import Path
 
 from stream.lib.session import Manifest, SessionEvent
@@ -157,6 +159,18 @@ class ViewerQueueTest(unittest.TestCase):
         viewer.push_json({"type": "hello"})
         self.assertEqual(list(viewer.messages), [])
 
+    def test_a_queue_overflow_is_logged(self):
+        # A dropped frame is the mechanism behind a frozen picture; it used to be
+        # counted for the tests only, invisible in production.
+        viewer = Viewer(None, maxsize=2)
+        viewer.push_json({"type": "hello"})
+        viewer.push_video(b"key", True)
+        output = io.StringIO()
+        with redirect_stdout(output):
+            viewer.push_video(b"delta", False)
+        self.assertIn("viewer queue full", output.getvalue())
+        self.assertEqual(viewer.dropped, 1)
+
 
 class StreamerTest(unittest.IsolatedAsyncioTestCase):
     def make_streamer(self, manifest=None, video=b""):
@@ -269,6 +283,42 @@ class StreamerTest(unittest.IsolatedAsyncioTestCase):
                     and json.loads(message).get("type") == "hello"
                 )
                 >= 2
+            )
+        )
+
+    async def test_a_codec_change_hands_over_a_cached_keyframe(self):
+        # The new `hello` makes the page drop its decoder (`needKey`), so the
+        # server has to hand it a keyframe. The new segment carries only deltas:
+        # any type-1 message after the `hello` can only come from the replay.
+        video = START + SPS + START + PPS + START + IDR
+        capture, streamer = self.make_streamer(video=video)
+        await self.adopt(streamer)
+        ws, _task = await self.attach(streamer)
+        await streamer.flush_frame([IDR], True)
+        await streamer.flush_frame([DELTA], False)
+
+        (capture.directory / "video.h264").write_bytes(
+            START + SPS2 + START + PPS + START + DELTA
+        )
+        event = SessionEvent(
+            name=capture.directory.name,
+            directory=str(capture.directory),
+            manifest=Manifest(session="20261029-080506", segments={"video": 1}),
+            changed=False,
+            streams=("video",),
+        )
+        await streamer.adopt(event)
+        before = len(ws.sent)
+
+        loop = asyncio.create_task(streamer.video_loop())
+        self._tasks.append(loop)
+        self.assertTrue(await wait_until(lambda: streamer.sps == SPS2))
+        self.assertTrue(
+            await wait_until(
+                lambda: any(
+                    isinstance(message, bytes) and message[0] == 1
+                    for message in ws.sent[before:]
+                )
             )
         )
 

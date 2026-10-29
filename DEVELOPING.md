@@ -38,8 +38,8 @@ Pi and the SSH tunnel.
 
 | Area | File | Change |
 | --- | --- | --- |
-| OpenAuto | `include/.../Auriga*`, `src/autoapp/Projection/Auriga*` | capture sinks, session manager, writer queue, input device, silent mic. Patch: `patches/openauto-capture.patch`. |
-| OpenAuto | `src/autoapp/App.cpp`, `Service/ServiceFactory.cpp`, `UI/SettingsWindow.cpp` | ephemeral TCP port and no `startServerSocket()` in capture mode, macOS Bluetooth lister fix, one capture-mode predicate. Patch: `patches/openauto-macos.patch`. |
+| OpenAuto | `include/.../Auriga*`, `src/autoapp/Projection/Auriga*`, `Service/ServiceFactory.cpp`, `Service/MediaSink/*` | capture sinks, session manager, writer queue, input device, silent mic, capture services and the one capture-mode predicate. Patch: `patches/openauto-capture.patch`. |
+| OpenAuto | `src/autoapp/App.cpp`, `UI/SettingsWindow.cpp` | ephemeral TCP port and no `startServerSocket()` in capture mode, macOS Bluetooth lister fix. Patch: `patches/openauto-macos.patch`. |
 | OpenAuto | `src/autoapp/autoapp.cpp`, `App.cpp` | Pass `0x2717, 0xFF40` to `USBHub`; skip `enumerateDevices()` in capture mode. Patch: `patches/openauto-auriga-usb-filter.patch`. |
 | OpenAuto | `src/autoapp/Service/Sensor/SensorService.cpp` | Call `gps_read()` only after a successful `gps_open()`; prevents intermittent `gps_shm_read` segfaults without GPSD. Patch: `patches/openauto-auriga-gps-guard.patch`. |
 | OpenAuto | `src/autoapp/Service/AndroidAutoEntity.cpp` | AA identity `Auriga` / `Auriga` / `Auriga`. Patch: `patches/openauto-auriga-identity.patch`. |
@@ -149,8 +149,11 @@ fix it; the dongle needs a physical replug (cold boot to MTP). Ask the user.
 
 ## Known internal issues / next steps
 
-- First AA entity can reset on the dongle's BT pairing request
-  (`AASDK Error 10`); OpenAuto reconnects and the second session is stable.
+- The first AA entity can die with `AASDK Error 10` either during setup or right
+  after the channels start; OpenAuto reconnects and the next session is stable.
+  The cause is `unverified` — see
+  [`docs/Android Auto head unit.md`](docs/Android%20Auto%20head%20unit.md)
+  (first AA entity section).
 - File sinks ignore AA timestamps; streamed A/V is not sample-synced.
 - Retention keeps five sessions; a rotated segment's bytes are discarded.
 - The live rig may still be running an older `autoapp`/stream build; check

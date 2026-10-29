@@ -4,7 +4,9 @@
 # The only runtime entry point. It resolves the capture directory and the input
 # FIFO once, exports both to the head unit (openauto-config/run.sh) and passes
 # them to the stream server, owns the single-instance lock, and waits for the
-# HTTP socket instead of sleeping. See docs/Android Auto head unit.md#runtime.
+# HTTP socket instead of sleeping. Readiness also reports whether an AA session
+# exists, because both listeners can be up with a blank canvas.
+# See docs/Android Auto head unit.md#runtime.
 
 set -eu
 
@@ -23,6 +25,7 @@ START_GUARD=$CAPTURE_DIR/.auriga.start
 HTTP_PORT=${AURIGA_HTTP_PORT:-8080}
 WS_PORT=${AURIGA_WS_PORT:-8081}
 READY_TIMEOUT=${AURIGA_READY_TIMEOUT:-20}
+SESSION_TIMEOUT=${AURIGA_SESSION_TIMEOUT:-10}
 STAMP=$(date +%Y%m%d-%H%M%S)
 AUTOAPP_LOG=$LOG_DIR/openauto-mac-$STAMP.log
 STREAM_LOG=$LOG_DIR/stream-mac-$STAMP.log
@@ -109,6 +112,27 @@ wait_port() {
   return 1
 }
 
+# Both listeners can be up while the dongle still waits for the phone, and a
+# socket-only check calls that "up" while the canvas stays blank. Wait a bounded
+# time for a session that differs from the pointer seen before the start: a
+# `current` left by an earlier run is not this run's session. Prints the name.
+current_session() { readlink "$CAPTURE_DIR/current" 2>/dev/null || true; }
+
+wait_session() {
+  before=$1
+  n=$(( ${2:-10} * 4 ))
+  while [ "$n" -gt 0 ]; do
+    now=$(current_session)
+    if [ -n "$now" ] && [ "$now" != "$before" ]; then
+      echo "$now"
+      return 0
+    fi
+    sleep 0.25
+    n=$(( n - 1 ))
+  done
+  return 1
+}
+
 start_fifo() {
   # A writer left over from an earlier run (lost lock, killed start) holds the
   # old inode; the new FIFO would never see it. Reap them before recreating.
@@ -165,6 +189,11 @@ print_summary() {
   echo "  autoapp: pid $AUTOAPP_PID, log $AUTOAPP_LOG"
   echo "  stream:  pid $STREAM_PID, log $STREAM_LOG"
   echo "  capture: $CAPTURE_DIR"
+  if [ -n "${SESSION:-}" ]; then
+    echo "  session: $SESSION"
+  else
+    echo "  session: none yet (no AA session from the phone; run 'status' to re-check)"
+  fi
   echo "  fifo:    $FIFO"
   echo "  ui:      http://localhost:$HTTP_PORT"
   echo
@@ -205,6 +234,8 @@ cmd_start() {
     die "missing python websockets for $PY (create .venv: see docs/Build.md)"
   fi
 
+  SESSION_BEFORE=$(current_session)
+
   start_fifo
   start_autoapp
   start_stream
@@ -228,6 +259,11 @@ cmd_start() {
     echo "auriga: autoapp exited during startup" >&2
     rollback_start
     exit 1
+  fi
+
+  SESSION=
+  if session=$(wait_session "$SESSION_BEFORE" "$SESSION_TIMEOUT"); then
+    SESSION=$session
   fi
 
   start_caffeinate
@@ -273,8 +309,7 @@ cmd_stop() {
   pkill -f "$STREAM_PGREP" 2>/dev/null || true
   pkill -f "sleep $FIFO_WRITER_SECONDS" 2>/dev/null || true
 
-  rm -f "$FIFO" "$LOCK" /tmp/auriga-mac-autoapp.pid /tmp/auriga-mac-stream.pid \
-    /tmp/auriga-mac-caffeinate.pid /tmp/auriga-fifo-writer.pid
+  rm -f "$FIFO" "$LOCK"
   rm -rf "$START_GUARD"
   say "head unit stopped"
 }

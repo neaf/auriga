@@ -100,8 +100,10 @@ Baseline: manual checklist M1–M8 asserted passing by the user on 2026-10-29
   Status: kept.
 - FR-STR-07: A new `current` target drops the queue, sends `{"type":"reset"}` then
   `hello`, clears the GOP, re-extracts SPS/PPS and restarts the content clock; a
-  manifest segment-count change reopens one file and re-reads its SPS/PPS.
-  Evidence: `stream/server.py` (`adopt`, `video_loop`),
+  manifest segment-count change reopens one file, re-reads its SPS/PPS, and on a
+  changed description sends `hello` and replays the cached GOP
+  (`Streamer.resync_viewer`).
+  Evidence: `stream/server.py` (`adopt`, `video_loop`, `resync_viewer`),
   `stream/lib/session.py` (`SessionFollower`). Status: kept.
 - FR-STR-08: Client input `{type:"tap"|"down"|"move"|"up", x, y}` is written as
   `"<cmd> <x> <y>\n"` to the FIFO via a fresh `O_WRONLY|O_NONBLOCK` fd per event.
@@ -128,8 +130,8 @@ Baseline: manual checklist M1–M8 asserted passing by the user on 2026-10-29
 ## RUN — runtime orchestration (scripts)
 
 - FR-RUN-01: `scripts/auriga.sh start` brings up `autoapp` (offscreen capture),
-  the stream server, `caffeinate`, waits for both listeners, then opens Brave at
-  `http://localhost:8080`.
+  the stream server, `caffeinate`, waits for both listeners and the first AA
+  session, then opens Brave at `http://localhost:8080`.
   Evidence: `scripts/auriga.sh` (`cmd_start`, `cmd_status`);
   audit/runtime-orchestration.md#F1. Status: kept.
 - FR-RUN-02: Start is all-or-nothing: when either component of a pair runs, the
@@ -276,7 +278,10 @@ Baseline: manual checklist M1–M8 asserted passing by the user on 2026-10-29
   NFR-05/FR-STR-13).
 - NFR-07: Startup readiness is a poll of the listen sockets, not a fixed
   `sleep 1`. Satisfied: `wait_port` polls HTTP then WS (`nc -z`, 20 s,
-  `AURIGA_READY_TIMEOUT`). Evidence: `scripts/auriga.sh` (`wait_port`, `cmd_start`).
+  `AURIGA_READY_TIMEOUT`), then `wait_session` waits up to 10 s for the first
+  `<capture-dir>/current` so a dongle at `Waiting for device...` is reported as
+  `session: none yet` instead of "up" with a blank canvas. Evidence:
+  `scripts/auriga.sh` (`wait_port`, `wait_session`, `cmd_start`).
   Status: kept, satisfied.
 - NFR-08: One `autoapp`/stream pair owns the dongle and capture dir; enforced by a
   lock file plus a cmdline-checked pid, not only `pgrep` heuristics. Satisfied:

@@ -21,9 +21,10 @@ with `AutoLink-A512`, Brave installed.
 
 `start` brings up `autoapp` (offscreen capture), the local stream server,
 `caffeinate`, waits for `127.0.0.1:8080`, then opens Brave. `status` reports the
-pids, both ports and the current session. One pair per capture directory: a lock
-file in the capture dir makes a second `start` refuse instead of starting a
-duplicate.
+pids, both ports and the current session. A second `start` refuses instead of
+starting a duplicate: the lock file in the capture dir names the running pair and
+a host-wide `pgrep` catches a pair whose lock is gone, so the scope is the host,
+not one capture directory.
 
 Then open `http://localhost:8080` in Brave. The page auto-connects to
 `ws://127.0.0.1:8081`; audio starts muted, click the small 🔇 button to enable
@@ -52,6 +53,7 @@ adb devices -l
 adb -s RFGL329J04J shell svc usb getFunctions   # expect: mtp
 tail -20 "$(ls -t logs/openauto-mac-*.log | head -1)"   # Version Received + pings
 ffmpeg -loglevel info -i captures-mac/current/video.h264 -f null - 2>&1 | tail -1
+# `current` exists only after the first AA session; `status` prints "session: none yet" until then.
 ```
 
 Expected USB IDs:

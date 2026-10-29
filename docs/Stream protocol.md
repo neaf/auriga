@@ -77,7 +77,7 @@ rename on the head unit, so a poll never sees a half-written pointer or manifest
 | Event | Detection | Reaction |
 | --- | --- | --- |
 | new session | `current` resolves to a different name than the previous poll | drop everything queued, send `{"type":"reset"}` then a fresh `hello`; reopen both files at offset 0/44; clear the GOP; re-extract SPS/PPS; restart the content clock (`stream/server.py` `adopt`, `video_loop`, `audio_loop`) |
-| segment rollover | a stream's manifest count advanced | reopen that one file at offset 0; no `reset`. For video, re-read the new segment head: the avcC description is kept when SPS/PPS are unchanged, and a fresh `hello` is sent when they differ (`stream/server.py` `adopt` sets `codec_stale`, `video_loop` re-reads) |
+| segment rollover | a stream's manifest count advanced | reopen that one file at offset 0; no `reset`. For video, re-read the new segment head: the avcC description is kept when SPS/PPS are unchanged; when they differ the server sends a fresh `hello` and replays the cached GOP, so the page resyncs on a keyframe instead of waiting for the encoder's next IDR (`stream/server.py` `adopt` sets `codec_stale`, `video_loop` re-reads, `resync_viewer`) |
 | pointer absent | `readlink` fails | nothing; the loops keep reading the last known session |
 | file shorter than the offset | only used to avoid a negative read | wait for the epoch change; no session inference from file size (`stream/server.py` `video_loop`) |
 
@@ -112,10 +112,14 @@ the next keyframe.
 
 The client asks for the same replay with `{"type":"keyframe"}`; the server drops
 queued video, re-sends `hello` and replays the cache (`stream/server.py`
-`handle`). The page sends it on a content-timestamp gap, on a decoder error, and
-when its decode queue exceeds its cap (`stream/web/app.js` `requestKeyframe`,
-`handleBinary`). An empty cache means the next live keyframe is the resync
-point.
+`handle`). The page sends it on a content-timestamp gap, on a decoder error, when
+its decode queue exceeds its cap, and on a delta it has no keyframe for — for
+example the first delta after a codec-change `hello` (`stream/web/app.js`
+`requestKeyframe`, `handleBinary`; at most one request per second). An empty
+cache means the next live keyframe is the resync point.
+
+A codec change is the same handover started by the server: the new `hello`,
+queued video dropped, then the cached GOP (`stream/server.py` `resync_viewer`).
 
 ## Wire protocol
 
@@ -123,7 +127,7 @@ Server to client, text (JSON):
 
 | Message | Fields | Meaning |
 | --- | --- | --- |
-| `hello` | `type`, `width`, `height`, `fps`, `codec`, `description` | decoder configuration and canvas geometry; sent on connect, after a `reset`, after a keyframe request, when SPS/PPS first appear, and after a rollover whose SPS/PPS differ |
+| `hello` | `type`, `width`, `height`, `fps`, `codec`, `description` | decoder configuration and canvas geometry; sent on connect, after a `reset`, after a keyframe request, when SPS/PPS first appear, and after a rollover whose SPS/PPS differ (followed by the cached GOP) |
 | `reset` | `type` | the capture session changed; drop the decoder, the video-gap state and the audio anchor |
 | `status` | `type`, `text` | a server-side condition the page should show; today only an input-FIFO write failure |
 
@@ -188,10 +192,10 @@ between them is whatever the capture files contain at connect time.
 | --- | --- |
 | WebSocket URL | `ws://<location.hostname>:<wsPort>`, where `wsPort` comes from `config.json` (fallback 8081) (`app.js` `loadConfig`, `connect`) |
 | Sockets | at most one per page: `connect()` closes the previous socket before opening a new one (`app.js`) |
-| Reconnect | every 2 s after a close; a `4001` close means another tab took the stream, so the page stops reconnecting and says so (`app.js` `connect`) |
+| Reconnect | every 2 s after a close or a socket error; a `4001` close means another tab took the stream, so the page stops reconnecting and says so (`app.js` `connect`) |
 | Video | `VideoDecoder` configured with `codec`, avcC `description`, the `hello` geometry as coded size, `optimizeForLatency`; frames drawn to the canvas |
 | Canvas | sized from `hello` (and from the decoded frame when they differ); the CSS keeps the intrinsic ratio inside the window and disables scrolling/zooming gestures (`app.js` `applyGeometry`; `index.html`) |
-| Keyframes | deltas are dropped while no keyframe has arrived; a content gap over 250 ms, a decoder error, or a decode queue over 2400 chunks triggers a `keyframe` request (`app.js` `handleBinary`, `requestKeyframe`) |
+| Keyframes | deltas are dropped while no keyframe has arrived, and each dropped delta asks for a replay (at most one request per second); a content gap over 250 ms, a decoder error, or a decode queue over 2400 chunks also triggers a `keyframe` request (`app.js` `handleBinary`, `requestKeyframe`) |
 | Audio | muted by default; the first unmute click creates/resumes an `AudioContext` at 48 kHz, `latencyHint: "interactive"`; muting suspends it and stops scheduled chunks (`app.js` `setMuted`) |
 | Audio scheduling | first chunk anchors at `currentTime + 0.15`; later chunks play at `anchor + (ts - firstTs)`; a chunk more than 0.2 s late is dropped; a backward jump re-anchors; a jump more than 1 s ahead re-anchors and recomputes this chunk's start (`app.js` `playAudio`) |
 | Gesture | primary pointer / left mouse button only; press then release within 8 px sends one `tap` at the press point; movement past 8 px sends `down` at the press point, `move` at most every 50 ms, `up` at release |

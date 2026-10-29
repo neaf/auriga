@@ -22,6 +22,18 @@ PID = 0x2D00
 TIMEOUT_ERRNOS = (60, 110)
 
 
+def describe_endpoints(ep_in, ep_out) -> str:
+    """The banner: `IN=0x81 OUT=0x02`, or `OUT=none` without an OUT endpoint.
+
+    The address formatting is a real branch, not a conditional inside an f-string
+    format spec: `f"{ep_out.bEndpointAddress:#x if ep_out else 'none'}"` parses as
+    a format spec and raises (`ValueError` with an endpoint, `AttributeError`
+    without one), which made the whole tool unusable.
+    """
+    out = "none" if ep_out is None else "%#x" % ep_out.bEndpointAddress
+    return "IN=%#x OUT=%s" % (ep_in.bEndpointAddress, out)
+
+
 def main():
     dev = usb.core.find(idVendor=VID, idProduct=PID)
     if dev is None:
@@ -61,11 +73,7 @@ def main():
         if ep_in is None:
             print("no bulk-IN endpoint on interface 0", flush=True)
             return 1
-        print(
-            f"IN={ep_in.bEndpointAddress:#x} "
-            f"OUT={ep_out.bEndpointAddress:#x if ep_out else 'none'}",
-            flush=True,
-        )
+        print(describe_endpoints(ep_in, ep_out), flush=True)
 
         deadline = time.time() + 15
         while time.time() < deadline:
