@@ -153,7 +153,7 @@ It records a real car head unit (`T  M918500`), not the bench config.
 | File | Size | Status |
 | --- | ---: | --- |
 | `dongle-backup/videoInfo.orig` | 364 B | valid bench config: OPPO address, `auriga-pi`, Baseline 3.2 SPS/PPS |
-| `dongle-backup/videoInfo.car-trip` | 364 B | valid car-trip snapshot; `posttrip/videoInfo.post` is a tracked byte-identical duplicate |
+| `dongle-backup/videoInfo.car-trip` | 364 B | valid car-trip snapshot |
 | `dongle-backup/videoInfo.galaxy` | 364 B | invalid: `0x04` and `0x08` are 0, `0x12..0x4f` are 0 (no start codes, no SPS, no PPS), `0x72..0x79` are 0. Do not restore |
 | `dongle-backup/videoInfo.galaxy.active` | 364 B | byte-identical to `videoInfo.galaxy`, so also invalid |
 | `dongle-backup/btapp.db.galaxy-fresh` | 33 B | current pairing DB; sha256 `f6b4b7e6…`; current but `unverified` |

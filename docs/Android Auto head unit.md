@@ -312,6 +312,11 @@ Cause: `unverified`. Neither shape names a trigger: the setup shape shows no
 Bluetooth activity at all, and the negotiated shape does not show what the dongle
 rejected. The dongle-side USB transfer fails; the log stops there.
 Workaround: let OpenAuto reconnect; if the dongle stays in AOA, replug it.
+Observed on 2026-10-29: the repeating shape was the phone's `Enable after unlock`
+prompt. If it times out, the dongle resets again about every 40 s. Accept the
+prompt on the phone during the first connect after a cold boot. To avoid the
+prompt, enable `Start Android Auto while locked` in the phone's Android Auto
+settings, or keep the phone unlocked for the first connect.
 Location: `logs/openauto-mac-*.log`; `App.cpp` (`onAndroidAutoQuit`,
 `waitForDevice`).
 

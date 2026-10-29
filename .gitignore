@@ -26,9 +26,14 @@
 /captures/*.wav
 /captures/*.png
 
-# Runtime logs; keep the filtered baseline
+# Runtime logs
 /logs/*.log
-!/logs/run-baseline-114525.filtered.log
+
+# Re-architect run state
+/.rearch/
+
+# Input traces
+*.jsonl
 
 # Python
 __pycache__/
@@ -42,10 +47,7 @@ __pycache__/
 /dongle-backup/*.db.*
 /dongle-backup/*.bk
 /dongle-backup/*.bk.*
-/posttrip/*.db
-/posttrip/*.db.*
-/posttrip/*.bk
-/posttrip/*.bk.*
+/posttrip/
 /btapp.db*
 /btapp.bk*
 

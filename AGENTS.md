@@ -6,7 +6,7 @@ directory to run the head unit, mirror the phone's AA screen, capture
 video/audio/input, and feed a live project from the stream.
 
 You do **not** need to build or modify OpenAuto/aasdk to use it. For changing
-the head-unit package itself, see [`DEVELOPING.md`](DEVELOPING.md).
+the head-unit package itself, see [`docs/Build.md`](docs/Build.md).
 
 ## Quick start (macOS, dongle direct)
 
@@ -29,6 +29,11 @@ not one capture directory.
 Then open `http://localhost:8080` in Brave. The page auto-connects to
 `ws://127.0.0.1:8081`; audio starts muted, click the small 🔇 button to enable
 it.
+
+On the first connect after a cold boot, accept the phone's `Enable after unlock`
+prompt; if it times out the dongle resets every ~40 s until it is accepted.
+`Start Android Auto while locked` in the phone's Android Auto settings avoids the
+prompt.
 
 The Galaxy S25 can stay on the Mac's USB for `adb` while AA runs. The script
 only AOA-switches the dongle; the phone should remain in MTP+ADB
@@ -144,7 +149,7 @@ and client behavior.
 ## Safety
 
 - Do not run `mtp-delfile` or restore dongle config/DB files without explicit
-  permission. The `dongle-backup/` README has the rules; the 207-byte DBs are
+  permission. `docs/AutoLink A512 dongle.md` has the rules; the 207-byte DBs are
   stale and must not be restored with the current phone.
 - Do not expose the stream server beyond localhost.
 - Do not commit `captures-mac/`, `logs/`, `.venv/`, `.serena/`, or any dongle
@@ -156,7 +161,7 @@ and client behavior.
 ## Package development
 
 Building, patching, and changing the USB filter/GPS guard: see
-[`DEVELOPING.md`](DEVELOPING.md). The short version: `openauto/` and
+[`docs/Build.md`](docs/Build.md). The short version: `openauto/` and
 `aasdk-upstream/` are separate git clones and `patches/` is the source of
 truth; don't edit build outputs.
 

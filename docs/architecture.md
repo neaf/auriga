@@ -1,7 +1,7 @@
 # Architecture
 
 Target design for the Auriga head unit + capture rig, designed from
-`.rearch/requirements.md` alone. macOS is the only supported host. The patched
+`docs/requirements.md`. macOS is the only supported host. The patched
 OpenAuto/aasdk stack is kept as an external adapter built from `patches/`; it is
 not replaced.
 
@@ -19,7 +19,7 @@ phone ──BT/Wi-Fi──▶ AutoLink A512 dongle ──USB AOA──▶ autoap
                                               │   input.jsonl
                                               │   manifest.json
                                               ▼
-                                         auriga_stream.py (asyncio)
+                                         stream/server.py (asyncio)
                                          HTTP 127.0.0.1:8080 / WS 8081
                                                         │
                                               Brave (WebCodecs + WebAudio)
@@ -147,51 +147,18 @@ session change from `size < offset`.
 
 ## FR → module traceability
 
-| Requirement | Module | Phase |
-| --- | --- | --- |
-| FR-HU-01..09, 11 | headunit adapter | P5 (identity in P5) |
-| FR-HU-10 (rename) | headunit adapter | P5 |
-| FR-STR-01..06, 08..12 | stream server / browser | P4 |
-| FR-STR-07 (reset) | stream server (mechanism → `current`) | P3/P4 |
-| FR-STR-13 (per-session) | capture sink + stream libs | P3 |
-| FR-STR-14 (one viewer) | stream server | P4 |
-| FR-RUN-01..04, 06 | runtime orchestration | P6 |
-| FR-DGL-01..06 | docs (dongle topic) | P1 |
-| FR-BLD-01..07 | build tooling | P7 |
-| NFR-01 | capture sink | P5 |
-| NFR-02 | capture sink + stream server | P4/P5 |
-| NFR-03 | stream server + orchestration | P4/P6 |
-| NFR-04 | orchestration (macOS only) | P6 |
-| NFR-05 | capture sink + stream libs | P3 |
-| NFR-07 | orchestration | P6 |
-| NFR-08 | orchestration | P6 |
-| CON-* | docs + adapters | P1 |
-
-## Old → new file mapping
-
-| Current | Target |
+| Requirement | Module |
 | --- | --- |
-| `stream/auriga_stream.py` (423, monolith) | `stream/auriga_stream.py` (thin CLI) + `stream/server.py` + `stream/lib/{h264,session,clock}.py` |
-| `stream/web/app.js`, `index.html` | same paths, reworked (single-viewer, keyframe request, manifest geometry) |
-| `scripts/mac-headunit-start.sh` + `mac-headunit-stop.sh` | `scripts/auriga.sh {start\|stop\|status}` |
-| `openauto-config/run-mac.sh` + `run.sh` | `openauto-config/run.sh` (macOS only) |
-| `patches/openauto-capture.patch` (1101) | same patch, extended (session, buffered write, codec-config separation, SIGTERM) |
-| (no file) | `patches/aasdk-version-absl.patch`, `patches/openauto-auriga-identity.patch` |
-| (no file) | `scripts/build.sh` |
-| `scripts/aoa_probe.py`, `scripts/aoa_read.py` | `tools/aoa_probe.py`, `tools/aoa_read.py` |
-| `docs in README.md/RUNBOOK.md/MAC-PORT.md/…` | `docs/{AutoLink A512 dongle,Android Auto head unit,Stream protocol,Build,requirements,architecture}.md` |
-
-## What gets deleted
-
-- `capture/` (26 files) — dropped (Q7), no replacement.
-- `PHONE-APP.md` — dropped (Q9).
-- `openauto-plan.md`, `NEXT-SESSION.md`, `MAC-PORT.md`, `RUNBOOK.md`,
-  `stream/README.md`, `captures/README.md`, `dongle-backup/README.md` — facts
-  folded into the topic docs.
-- `scripts/pi-start.sh`, `pi-stop.sh`, `mac-start.sh`, `mac-stop.sh`,
-  `aa-tap.sh` — Pi fallback dropped (Q1); `auriga.sh` replaces start/stop.
-- `captures/*-input.jsonl` (tracked) and `logs/run-baseline-*.log` — folded;
-  `.gitignore` gains `*.jsonl`.
-- `posttrip/` — byte-identical duplicates of `dongle-backup/videoInfo.car-trip`
-  etc.; canonical copies stay in `dongle-backup/`.
-- `.rearch/` and the `rearch-base` tag / `rearch/*` branches — Stage 6.
+| FR-HU-01..11 | headunit adapter |
+| FR-STR-01..14 | stream server / browser |
+| FR-RUN-01..04, 06 | runtime orchestration |
+| FR-DGL-01..06 | docs (dongle topic) |
+| FR-BLD-01..07 | build tooling |
+| NFR-01 | capture sink |
+| NFR-02 | capture sink + stream server |
+| NFR-03 | stream server + orchestration |
+| NFR-04 | orchestration (macOS only) |
+| NFR-05 | capture sink + stream libs |
+| NFR-07 | orchestration |
+| NFR-08 | orchestration |
+| CON-* | docs + adapters |

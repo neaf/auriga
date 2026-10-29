@@ -300,3 +300,40 @@ and the dongle to themselves:
 .venv/bin/python tools/aoa_probe.py probe   # stop the head unit first
 ```
 Runtime verification of the rig is in `docs/Android Auto head unit.md`.
+
+## Editing the package
+
+- The root repo tracks `docs/`, `scripts/`, `stream/`, `tests/`, `tools/`, and
+  `patches/`.
+- `openauto/` and `aasdk-upstream/` are separate git clones, ignored by the root
+  repo. Their working trees are expected to be patched/dirty.
+- `patches/` is the source of truth. A clean rebuild applies the patches; do not
+  rely on the nested trees being present or clean.
+- Build outputs (`build-aasdk-mac/`, `build-openauto-mac/`), captures
+  (`captures-mac/`), logs, `.venv/`, and `.serena/` are ignored.
+
+Workflow:
+
+1. Edit the nested `openauto/` or `aasdk-upstream/` tree.
+2. Rebuild aasdk if its headers or sources changed, then relink `autoapp`.
+3. Regenerate the affected patch in `patches/`.
+4. Update `docs/Android Auto head unit.md` or this file when behavior or patch
+   order changes.
+5. Run the verification block above.
+6. Commit the root repo, including the patch and docs. Never commit nested
+   clones, build outputs, captures, logs, or dongle credential DBs.
+
+Regenerate the aasdk patches:
+
+```bash
+git -C aasdk-upstream diff -- include/aasdk/USB/USBHub.hpp src/USB/USBHub.cpp \
+  > patches/aasdk-usb-filter.patch
+git -C aasdk-upstream diff -- include/aasdk/Version.hpp protobuf/CMakeLists.txt \
+  > patches/aasdk-version-absl.patch
+```
+
+For the incremental OpenAuto patches, diff against the same files with the base
+patches applied but the new change reverted, so the result applies on top of
+`openauto-capture.patch` + `openauto-macos.patch`. Check it with
+`git -C openauto apply --check --reverse` and, for the full set, `diff -r`
+against a pristine clone built by `scripts/build.sh`.
