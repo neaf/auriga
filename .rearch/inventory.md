@@ -100,7 +100,7 @@ Docs are counted in every aspect they discuss, so these totals overlap.
 | openauto-integration | 16 | 1360 patches + 114 config | 1739 docs + 120 log | 3333 |
 | stream | 11 | 717 | 995 | 1712 |
 | runtime-orchestration | 13 | 314 | 946 | 1260 |
-| dongle-hardware | 18 | 296 | 1459 | 1755 |
+| dongle-hardware | 19 | 296 | 1459 | 1755 |
 | minimal-capture | 26 | 2557 | 568 | 3125 |
 | phone-app-design | 2 | 0 | 807 | 807 |
 | build-and-tooling | 11 | 332 | 956 | 1288 |
