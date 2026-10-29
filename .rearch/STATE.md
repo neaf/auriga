@@ -12,7 +12,7 @@ Stage: 4 (architecture and phase plan)
 - Stage 2 audits: 7 aspect reports + seams, all 72 tracked files covered.
   `33e7d48`
 - Stage 3 requirements: 54 FR (47 kept, 11 dropped), 8 NFR, 8 CON; all open
-  questions resolved. <hash>
+  questions resolved. `5d6c8ce`
 
 ## Decisions
 - 2026-10-29: treat M1-M8 as passing at baseline; user call ("assume everything works").
