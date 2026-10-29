@@ -81,6 +81,14 @@ class SpsPpsTest(TempFileMixin, unittest.TestCase):
         sps, pps = sps_pps_from_bytes(data)
         self.assertEqual((sps, pps), (SPS2, PPS))
 
+    def test_a_truncated_sps_is_not_a_parameter_set(self):
+        # A partially flushed segment head gives a 1-3 byte "SPS".
+        short = bytes([0x67, 0x42])
+        self.assertEqual(
+            sps_pps_from_bytes(START + short + START + PPS + START + IDR),
+            (None, PPS),
+        )
+
     def test_limit_stops_the_read(self):
         path = self.write_temp(START + IDR + START + SPS + START + PPS)
         self.assertEqual(extract_sps_pps(path, limit=len(START + IDR)), (None, None))
@@ -98,6 +106,12 @@ class BuildAvccTest(unittest.TestCase):
         )
         self.assertEqual(avcc[11 + len(SPS):], PPS)
         self.assertEqual(len(avcc), 11 + len(SPS) + len(PPS))
+
+    def test_a_truncated_sps_is_rejected(self):
+        with self.assertRaises(ValueError):
+            build_avcc(bytes([0x67, 0x42]), PPS)
+        with self.assertRaises(ValueError):
+            build_avcc(SPS, b"")
 
 
 class AvccSampleTest(unittest.TestCase):

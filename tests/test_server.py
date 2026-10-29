@@ -10,15 +10,19 @@ import os
 import struct
 import tempfile
 import unittest
+import urllib.request
 from pathlib import Path
 
-from stream.server import REPLACED_CODE, Streamer, Viewer
+from stream.lib.session import Manifest, SessionEvent
+from stream.server import REPLACED_CODE, Streamer, Viewer, serve_http
 
 START = b"\x00\x00\x00\x01"
 SPS = bytes([0x67, 0x42, 0x80, 0x1F, 0xDA, 0x01, 0x40, 0x16, 0xE8, 0x06, 0x05, 0xA8])
+SPS2 = bytes([0x67, 0x42, 0x80, 0x1F, 0xDA, 0x01, 0x40, 0x16, 0xE8, 0x06, 0x05, 0xA9])
 PPS = bytes([0x68, 0xCE, 0x06, 0xE2])
 IDR = bytes([0x65, 0x88, 0x84, 0x00, 0x21])
 DELTA = bytes([0x41, 0x9A, 0x22])
+WEB_DIR = Path(__file__).resolve().parent.parent / "stream" / "web"
 
 
 class FakeWebSocket:
@@ -27,6 +31,7 @@ class FakeWebSocket:
     def __init__(self):
         self.sent = []
         self.closed = None
+        self.close_gate = None
         self.incoming = asyncio.Queue()
 
     async def send(self, message):
@@ -34,6 +39,8 @@ class FakeWebSocket:
 
     async def close(self, code=1000, reason=""):
         self.closed = (code, reason)
+        if self.close_gate is not None:
+            await self.close_gate.wait()
         self.incoming.put_nowait(None)
 
     def feed(self, message):
@@ -208,6 +215,76 @@ class StreamerTest(unittest.IsolatedAsyncioTestCase):
         self.assertIs(streamer.viewer.ws, second)
         self.assertEqual(json.loads(second.sent[0])["type"], "hello")
 
+    async def test_replacement_sends_hello_before_any_video(self):
+        # While the old socket closes (an await), the tail loops must not push
+        # video into the new viewer: its decoder is not configured yet.
+        _capture, streamer = self.make_streamer()
+        await self.adopt(streamer)
+        first, _first_task = await self.attach(streamer)
+        first.close_gate = asyncio.Event()
+
+        second = FakeWebSocket()
+        replacement = asyncio.create_task(streamer.handle(second))
+        self.track(replacement)
+        await settle()
+        self.assertEqual(second.sent, [])
+
+        await streamer.flush_frame([IDR], True)
+        self.assertEqual(second.sent, [])
+
+        first.close_gate.set()
+        self.assertTrue(await wait_until(lambda: len(second.sent) >= 1))
+        self.assertEqual(json.loads(second.sent[0])["type"], "hello")
+
+    async def test_rollover_rereads_a_changed_sps(self):
+        video = START + SPS + START + PPS + START + IDR
+        capture, streamer = self.make_streamer(video=video)
+        await self.adopt(streamer)
+        self.assertEqual(streamer.codec, "avc1.42801f")
+        ws, _task = await self.attach(streamer)
+
+        # Same path, new segment head with a different SPS, manifest count +1.
+        (capture.directory / "video.h264").write_bytes(
+            START + SPS2 + START + PPS + START + IDR
+        )
+        event = SessionEvent(
+            name=capture.directory.name,
+            directory=str(capture.directory),
+            manifest=Manifest(session="20261029-080506", segments={"video": 1}),
+            changed=False,
+            streams=("video",),
+        )
+        await streamer.adopt(event)
+        self.assertTrue(streamer.codec_stale)
+
+        loop = asyncio.create_task(streamer.video_loop())
+        self._tasks.append(loop)
+        self.assertTrue(await wait_until(lambda: streamer.sps == SPS2))
+        self.assertTrue(
+            await wait_until(
+                lambda: sum(
+                    1
+                    for message in ws.sent
+                    if isinstance(message, str)
+                    and json.loads(message).get("type") == "hello"
+                )
+                >= 2
+            )
+        )
+
+    async def test_a_truncated_sps_does_not_kill_adoption(self):
+        # A partially flushed segment head used to raise IndexError inside
+        # `refresh_codec` and end `session_loop` for the rest of the process.
+        video = START + bytes([0x67, 0x42]) + START + PPS + START + IDR
+        _capture, streamer = self.make_streamer(video=video)
+        await self.adopt(streamer)
+        self.assertIsNone(streamer.description)
+
+        loop = asyncio.create_task(streamer.session_loop())
+        self.track(loop)
+        await settle()
+        self.assertFalse(loop.done())
+
     async def test_video_frames_carry_content_clock_timestamps(self):
         video = (START + SPS + START + PPS + START + IDR
                  + START + DELTA + START + bytes([0x41, 0x9A, 0x23]))
@@ -263,6 +340,19 @@ class StreamerTest(unittest.IsolatedAsyncioTestCase):
                 )
             )
         )
+
+
+class ConfigJsonTest(unittest.TestCase):
+    def test_the_page_learns_the_ws_port(self):
+        httpd = serve_http(str(WEB_DIR), 0, 9123)
+        self.addCleanup(httpd.server_close)
+        self.addCleanup(httpd.shutdown)
+        port = httpd.server_address[1]
+        with urllib.request.urlopen(
+            "http://127.0.0.1:%d/config.json" % port, timeout=5
+        ) as response:
+            payload = json.loads(response.read())
+        self.assertEqual(payload, {"wsPort": 9123})
 
 
 if __name__ == "__main__":

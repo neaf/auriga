@@ -8,9 +8,8 @@ integrating the package, see [`AGENTS.md`](AGENTS.md).
 ```
 phone --BT/WiFi--> AutoLink A512 dongle --USB AOA--> autoapp (OpenAuto)
                                                         |
-                                           captures-mac/video.h264
-                                           captures-mac/audio-*.wav
-                                           captures-mac/input.jsonl
+                                           captures-mac/current -> session-<id>/
+                                           video.h264, audio-*.wav, input.jsonl
                                                         |
                                               auriga_stream.py
                                               HTTP 8080 / WS 8081
@@ -39,11 +38,13 @@ Pi and the SSH tunnel.
 
 | Area | File | Change |
 | --- | --- | --- |
+| OpenAuto | `include/.../Auriga*`, `src/autoapp/Projection/Auriga*` | capture sinks, session manager, writer queue, input device, silent mic. Patch: `patches/openauto-capture.patch`. |
+| OpenAuto | `src/autoapp/App.cpp`, `Service/ServiceFactory.cpp`, `UI/SettingsWindow.cpp` | ephemeral TCP port and no `startServerSocket()` in capture mode, macOS Bluetooth lister fix, one capture-mode predicate. Patch: `patches/openauto-macos.patch`. |
+| OpenAuto | `src/autoapp/autoapp.cpp`, `App.cpp` | Pass `0x2717, 0xFF40` to `USBHub`; skip `enumerateDevices()` in capture mode. Patch: `patches/openauto-auriga-usb-filter.patch`. |
+| OpenAuto | `src/autoapp/Service/Sensor/SensorService.cpp` | Call `gps_read()` only after a successful `gps_open()`; prevents intermittent `gps_shm_read` segfaults without GPSD. Patch: `patches/openauto-auriga-gps-guard.patch`. |
+| OpenAuto | `src/autoapp/Service/AndroidAutoEntity.cpp` | AA identity `Auriga` / `Auriga` / `Auriga`. Patch: `patches/openauto-auriga-identity.patch`. |
 | aasdk | `include/aasdk/USB/USBHub.hpp`, `src/USB/USBHub.cpp` | Optional accessory-source VID/PID; check the descriptor before opening; only AOA-switch the configured source; ignore AOA+ADB phones when filtering. Patch: `patches/aasdk-usb-filter.patch`. |
 | aasdk | `include/aasdk/Version.hpp`, `protobuf/CMakeLists.txt` | AA protocol 1.7 and the absl include path for `aap_protobuf`. Patch: `patches/aasdk-version-absl.patch`. |
-| OpenAuto | `src/autoapp/autoapp.cpp` | Pass `0x2717, 0xFF40` to `USBHub`. Patch: `patches/openauto-auriga-usb-filter.patch`. |
-| OpenAuto | `src/autoapp/App.cpp` | Skip `enumerateDevices()` in capture mode; it runs the AOA query chain against every USB device. Same patch. |
-| OpenAuto | `src/autoapp/Service/Sensor/SensorService.cpp` | Call `gps_read()` only after a successful `gps_open()`; prevents intermittent `gps_shm_read` segfaults without GPSD. Patch: `patches/openauto-auriga-gps-guard.patch`. |
 
 Do **not** reintroduce `LIBUSB_HOTPLUG_MATCH_ANY` + an AOA switch for every
 non-AOAP device. That is what switched the development phone into accessory
@@ -52,7 +53,7 @@ mode and launched Android Auto's USB preflight error.
 ## Build (macOS)
 
 Full prerequisites and the exact configure lines are in
-[`MAC-PORT.md`](MAC-PORT.md). Incremental builds:
+[`docs/Build.md`](docs/Build.md). Incremental builds:
 
 ```bash
 cmake --build build-aasdk-mac --target aasdk -j8
@@ -92,7 +93,7 @@ run it after changing a patch.
 2. Rebuild aasdk if its headers/sources changed, then relink OpenAuto.
 3. Restart and verify (see checklist below).
 4. Regenerate the corresponding patch in `patches/`.
-5. Update `MAC-PORT.md`, `NEXT-SESSION.md`, or this file if behavior or the
+5. Update `docs/Android Auto head unit.md` or this file if behavior or the
    patch order changed.
 6. Commit the **root repo** (nested clones are ignored), including the patch
    and docs.
@@ -127,7 +128,7 @@ pgrep -fl "autoapp|auriga_stream"
 adb -s RFGL329J04J shell svc usb getFunctions   # expect: mtp
 ioreg -p IOUSB -l -w 0 | grep -E 'o (AutoLink|SAMSUNG_Android)@|"idProduct" = (26720|11520|11521|65344)'
 tail -20 "$(ls -t logs/openauto-mac-*.log | head -1)"   # Version Received + pings
-ffmpeg -loglevel info -i captures-mac/video.h264 -f null - 2>&1 | tail -1
+ffmpeg -loglevel info -i captures-mac/current/video.h264 -f null - 2>&1 | tail -1
 ```
 
 Expected: phone `04e8:6860` (MTP+ADB), dongle `18d1:2d00` (AOA), at least one
@@ -150,8 +151,7 @@ fix it; the dongle needs a physical replug (cold boot to MTP). Ask the user.
 
 - First AA entity can reset on the dongle's BT pairing request
   (`AASDK Error 10`); OpenAuto reconnects and the second session is stable.
-- Capture sinks truncate on a new AA session; per-session filenames are needed.
 - File sinks ignore AA timestamps; streamed A/V is not sample-synced.
-- AA display name is OpenAuto's hardcoded `Crankshaft-NG`.
-- Long runs grow `video.h264`; rotate/limit before long sessions.
-- `PHONE-APP.md` is a separate design branch, not the working capture stack.
+- Retention keeps five sessions; a rotated segment's bytes are discarded.
+- The live rig may still be running an older `autoapp`/stream build; check
+  `./scripts/auriga.sh status` before believing a code change is deployed.

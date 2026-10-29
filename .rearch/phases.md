@@ -241,4 +241,8 @@ Stage 6 owns every deletion listed in `docs-plan.md`: delete `capture/`,
 `PHONE-APP.md`, the exploratory docs and `.rearch/`; drop the `rearch-base` tag
 and `rearch/*` branches after the final traceability audit; move
 `requirements.md` and `architecture.md` into `docs/`; update `README.md` /
-`AGENTS.md`; run the full baseline and M1–M7. No code phase follows P7.
+`AGENTS.md`; run the full baseline and M1–M7.
+The extra Phase 8 (final-audit fixes) leaves two Stage 6 notes: `README.md` is
+still the Pi-era document and needs the planned rewrite (its factual
+contradictions are already fixed), and the kept docs must keep the `config.json`
+WS-port contract when `stream/README.md` is folded. No code phase follows P8.

@@ -41,8 +41,10 @@ ls "$(brew --prefix qt@5)/lib/cmake" | grep -E "Qt5(Bluetooth|Multimedia|Network
 2. OpenAuto at `4cc739b8` with the five OpenAuto patches, in order.
 3. The stream server's `.venv`.
 
-Seven patches in total. A pristine clone plus the seven reproduces the nested
-trees byte for byte.
+Seven patches in total. A pristine clone plus the seven matches the nested trees
+(the reliable check is `diff -r` against a patched pristine clone; the seven
+reverse-applies in `#verification` are a weaker smoke check, because they pass
+even when two patches carry the same hunk).
 
 ### One-command build
 
@@ -80,7 +82,8 @@ git -C aasdk-upstream apply "$PWD/patches/aasdk-version-absl.patch"
 
 `aasdk-version-absl.patch` carries the two aasdk changes this host needs:
 
-- `include/aasdk/Version.hpp:22-23`: `AASDK_MINOR = 7` (AA 1.7).
+- `include/aasdk/Version.hpp` (`AASDK_MAJOR`/`AASDK_MINOR`): `AASDK_MINOR = 7`
+  (AA 1.7).
 - `protobuf/CMakeLists.txt`: absl's include directories on `aap_protobuf`,
   because protobuf 36 headers include `absl/...`:
 
@@ -234,7 +237,7 @@ Location: `patches/aasdk-version-absl.patch`, `protobuf/CMakeLists.txt`.
 | `build-aasdk-mac/lib/libaasdk.a` | static aasdk |
 | `build-aasdk-mac/lib/libaap_protobuf.a` | static generated protobuf |
 | `build-openauto-mac/bin/autoapp` | symlink to the versioned binary |
-| `build-openauto-mac/bin/autoapp-2026.10.28+git.4cc739b.dirty` | build of the dirty `4cc739b8` tree; the `.dirty` suffix means the binary matches the tree, not `patches/` |
+| `build-openauto-mac/bin/autoapp-2026.10.29+git.4cc739b.dirty` | build of the dirty `4cc739b8` tree; the `.dirty` suffix means the binary matches the tree, not `patches/` (the `autoapp` symlink points here; an older `autoapp-2026.10.28…` build may still be on disk) |
 | `.build-from-patches/build-aasdk/lib/libaasdk.a` | `scripts/build.sh` aasdk, from `patches/` only |
 | `.build-from-patches/build-openauto/bin/autoapp` | `scripts/build.sh` `autoapp`, from `patches/` only |
 
@@ -287,7 +290,13 @@ Raw H.264 has no container timestamps: `ffprobe` reports
 
 `scripts/build.sh` is the single from-patches build; the incremental commands
 above are the fast path. `tests/` is a stdlib `unittest` suite for the pure
-helpers in `stream/lib/` (`h264`, `clock`, `session`) and runs without a head
-unit. `tools/` holds the standalone dongle diagnostics (`aoa_probe.py`,
-`aoa_read.py`); they need `pyusb` and the dongle to themselves.
+helpers in `stream/lib/` (`h264`, `clock`, `session`) plus the server/viewer
+paths in `tests/test_server.py`; it runs without a head unit. `tools/` holds the
+standalone dongle diagnostics (`aoa_probe.py`, `aoa_read.py`); they need `pyusb`
+and the dongle to themselves:
+
+```bash
+.venv/bin/pip install pyusb
+.venv/bin/python tools/aoa_probe.py probe   # stop the head unit first
+```
 Runtime verification of the rig is in `docs/Android Auto head unit.md`.

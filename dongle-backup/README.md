@@ -7,7 +7,7 @@ Current active config (2026-10-28):
 
 | File | Current active value | Local backup |
 | --- | --- | --- |
-| `videoInfo` | Galaxy address `5C:D3:3D:56:71:F4` + `auriga-pi` | `videoInfo.galaxy` |
+| `videoInfo` | Galaxy address `5C:D3:3D:56:71:F4` + `auriga-pi` | none valid: `videoInfo.galaxy` is invalid, see below |
 | `btapp.db` | fresh **33-byte** DB, one Galaxy record with the new link key (recreated after re-pair) | `btapp.db.galaxy-fresh` |
 | `btapp.bk` | **missing** (dongle did not recreate it) | none |
 | `ly_linktype_aa` | `0x01` (AA mode) | `ly_linktype_aa` |
@@ -21,11 +21,11 @@ Current active config (2026-10-28):
 - `videoInfo.orig` — original bench config: OPPO `14:47:2D:4C:20:1A` + `auriga-pi`.
 - `videoInfo.car-trip` — snapshot written by the real car trip: OPPO address +
   car head-unit name (`T  M91850...`), same 1280x720 SPS/PPS.
-- `videoInfo.galaxy` — current active snapshot (2026-10-28): Galaxy
-  `5C:D3:3D:56:71:F4` + `auriga-pi`. The dongle rewrites the runtime header at
-  `0x50` and the session tag, so this exact snapshot may differ from a
-  reconstructed file; use it when restoring the current Galaxy config.
-- `videoInfo.galaxy.active` — duplicate of the active snapshot.
+- `videoInfo.galaxy` — **invalid** snapshot (2026-10-28): width/height at
+  `0x04`/`0x08`, the start codes/SPS/PPS at `0x12..0x4f` and the session tag at
+  `0x72` are all zero. It also carries the Galaxy address and `auriga-pi`. Do
+  not restore it.
+- `videoInfo.galaxy.active` — byte-identical duplicate of the invalid snapshot.
 
 `btapp.db` files:
 

@@ -257,3 +257,38 @@
   openauto `4cc739b8` + the five OpenAuto patches is byte-identical to
   `openauto/`. All seven patches also `--check --reverse` clean against the live
   trees.
+
+- **P8 (extra, Stage 6 final-audit fixes): patch regeneration is per file.**
+  `openauto-capture.patch` shares `SensorService.cpp` with
+  `openauto-auriga-gps-guard.patch` and `ServiceFactory.cpp` with
+  `openauto-macos.patch`. A plain `git diff` over the capture pathspec also
+  contains the *later* patches' changes to those two files, so the regenerated
+  patch applied them twice and `openauto-auriga-gps-guard.patch` no longer
+  applied to a pristine clone. The patch was rebuilt by taking the committed
+  capture patch and replacing only the five file sections Phase 8 changed
+  (`AurigaWriter.hpp`, `AurigaVideoOutput.hpp/.cpp`,
+  `AurigaInputDevice.hpp/.cpp`). Consequence for verification: the seven
+  `git apply --check --reverse` runs pass even when two patches carry the same
+  hunk, so the real check is "apply all patches to a pristine clone, then
+  `diff -r` against the nested tree". Both trees now reproduce exactly.
+
+- **P8: the browser learns the WS port from `config.json`.** Making
+  `scripts/auriga.sh` the single source for `AURIGA_HTTP_PORT`/`AURIGA_WS_PORT`
+  exposed the hardcoded `8081` in `app.js`; passing the port to the server alone
+  would leave the page unable to connect. `stream/server.py` `serve_http` now
+  answers `GET /config.json` with `{"wsPort": …}` and the page fetches it before
+  connecting (fallback 8081). Tests: `tests/test_server.py` (`ConfigJsonTest`).
+
+- **P8: docs outside the four topic docs.** `DEVELOPING.md` (flat capture path,
+  stale current-change table and known-issues list, `MAC-PORT.md` pointers),
+  `README.md` (galaxy validity, deleted start/stop scripts, flat capture path)
+  and `dongle-backup/README.md` (the invalid galaxy snapshot is no longer
+  described as restorable) carried audit contradictions; they are fixed in
+  place. The Pi-era README narrative remains Stage 6's rewrite. `AGENTS.md` now
+  points at `docs/Stream protocol.md` instead of the soon-deleted
+  `stream/README.md`.
+
+- **P8: build dirs reused, live pair untouched.** Verification built the existing
+  `build-aasdk-mac`/`build-openauto-mac` incrementally and ran the tests; the
+  running `autoapp`/stream pair was not stopped or restarted, so no M-check was
+  re-run.

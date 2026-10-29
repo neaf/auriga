@@ -42,14 +42,18 @@ def split_nals(data: bytes):
 
 
 def sps_pps_from_bytes(data: bytes):
-    """Return the first SPS and PPS NAL units in `data`, or (None, None)."""
+    """Return the first SPS and PPS NAL units in `data`, or (None, None).
+
+    An SPS shorter than 4 bytes is a partial flush of a segment head (it has to
+    carry at least profile/constraint/level), not a usable parameter set.
+    """
     sps = pps = None
     nals, _ = split_nals(data)
     for nal in nals:
         if not nal:
             continue
         nal_type = nal[0] & 0x1F
-        if nal_type == 7 and sps is None:
+        if nal_type == 7 and sps is None and len(nal) >= 4:
             sps = nal
         elif nal_type == 8 and pps is None:
             pps = nal
@@ -66,7 +70,13 @@ def extract_sps_pps(path: str, limit: int = 512 * 1024):
 
 
 def build_avcc(sps: bytes, pps: bytes) -> bytes:
-    """Build the avcC decoder description: 4-byte NAL lengths, one SPS, one PPS."""
+    """Build the avcC decoder description: 4-byte NAL lengths, one SPS, one PPS.
+
+    Raises `ValueError` for a truncated parameter set: an avcC built from a
+    1-3 byte SPS would make every decoder configuration fail.
+    """
+    if len(sps) < 4 or not pps:
+        raise ValueError("truncated SPS/PPS: cannot build an avcC description")
     return (
         bytes([1, sps[1], sps[2], sps[3], 0xFF, 0xE1])
         + struct.pack(">H", len(sps))

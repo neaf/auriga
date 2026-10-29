@@ -47,11 +47,23 @@ else:
 AUDIO_HEADER = 44
 AUDIO_CHUNK = 7680          # 40 ms, 48 kHz, stereo, s16
 DEFAULT_FPS = 30
+DEFAULT_WS_PORT = 8081
 POLL_INTERVAL = 0.008
 SESSION_POLL_INTERVAL = 0.05
+VIDEO_READ_CAP = 1024 * 1024   # per poll, so a backlog cannot block the loop
+AUDIO_READ_CAP = 256 * 1024
 TRAILED_STREAMS = ("video", "audio-media")
 VIEWER_QUEUE = 240          # messages buffered for the viewer (~8 s of A/V)
 REPLACED_CODE = 4001        # WebSocket close code: another tab took the stream
+
+
+def usable_parameter_sets(sps, pps) -> bool:
+    """True when `sps`/`pps` are complete enough to build an avcC description.
+
+    `split_nals` can hand back a truncated SPS while the segment head is still
+    being flushed; `build_avcc` reads bytes 1..3 of the SPS.
+    """
+    return sps is not None and len(sps) >= 4 and pps is not None and len(pps) >= 1
 
 
 def stream_path(directory: str, stream: str) -> str:
@@ -135,12 +147,15 @@ class Viewer:
                 if wanted == "video":
                     self.synced = False
                 return
+        if not self.messages:
+            return
         self.messages.popleft()
         self.dropped += 1
         self.synced = False
 
     async def run(self):
         while not self.closed:
+            self.ready.clear()
             while self.messages and not self.closed:
                 _kind, message = self.messages.popleft()
                 try:
@@ -148,7 +163,6 @@ class Viewer:
                 except Exception:
                     self.closed = True
                     return
-            self.ready.clear()
             await self.ready.wait()
 
 
@@ -171,6 +185,7 @@ class Streamer:
         self.pps = None
         self.description = None
         self.codec = "avc1.42c01f"
+        self.codec_stale = False
 
     def video_path(self) -> str:
         return stream_path(self.session.directory, "video")
@@ -178,19 +193,26 @@ class Streamer:
     def audio_path(self) -> str:
         return stream_path(self.session.directory, "audio-media")
 
-    def refresh_codec(self) -> bool:
-        """Re-read SPS/PPS from the current segment; True when they changed."""
+    def _segment_codec(self):
+        """SPS/PPS found at the head of the current segment, or (None, None)."""
         if self.session is None:
-            return False
-        sps, pps = extract_sps_pps(self.video_path())
-        if sps is None or pps is None:
-            return False
-        if sps == self.sps and pps == self.pps:
-            return False
+            return None, None
+        return extract_sps_pps(self.video_path())
+
+    def apply_codec(self, sps, pps):
         self.sps, self.pps = sps, pps
         self.description = build_avcc(sps, pps)
         self.codec = "avc1.%02x%02x%02x" % (sps[1], sps[2], sps[3])
         print("stream: codec=%s" % self.codec, flush=True)
+
+    def refresh_codec(self) -> bool:
+        """Re-read SPS/PPS from the current segment; True when they changed."""
+        sps, pps = self._segment_codec()
+        if not usable_parameter_sets(sps, pps):
+            return False
+        if sps == self.sps and pps == self.pps:
+            return False
+        self.apply_codec(sps, pps)
         return True
 
     def hello(self):
@@ -221,9 +243,16 @@ class Streamer:
 
     async def session_loop(self):
         while True:
-            event = self.follower.poll()
-            if event is not None:
-                await self.adopt(event)
+            try:
+                event = self.follower.poll()
+                if event is not None:
+                    await self.adopt(event)
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                # One malformed manifest or truncated segment head must not end
+                # the loop; without it no new session is ever followed again.
+                print("stream: session poll failed: %s" % error, flush=True)
             await asyncio.sleep(SESSION_POLL_INTERVAL)
 
     async def adopt(self, event):
@@ -245,6 +274,7 @@ class Streamer:
             self.pps = None
             self.description = None
             self.codec = "avc1.42c01f"
+            self.codec_stale = False
             self.refresh_codec()
 
         if initial:
@@ -272,11 +302,19 @@ class Streamer:
                     flush=True,
                 )
 
-    async def open_when_ready(self, path: str, offset: int):
+        if "video" in event.streams:
+            # The new segment carries its own SPS/PPS; they may differ (encoder
+            # reconfigure). Re-read them once the segment head exists and send a
+            # fresh hello if the avcC description changed.
+            self.codec_stale = True
+
+    async def open_when_ready(self, path: str, offset: int, at_end: bool = False):
         """Open `path` at `offset` once it exists.
 
         A new session's files appear when the AA channels open, which can be
         seconds after `current` moves; the tail loop must wait rather than die.
+        `at_end` is for the audio tail: when the WAV appears late, the whole
+        existing file is backlog, so start at its end instead of replaying it.
         """
         while True:
             try:
@@ -285,6 +323,8 @@ class Streamer:
                 await asyncio.sleep(0.2)
                 continue
             handle.seek(offset)
+            if at_end:
+                handle.seek(0, os.SEEK_END)
             return handle
 
     async def video_loop(self):
@@ -314,7 +354,17 @@ class Streamer:
                 f = await self.open_when_ready(path, 0)
                 buf = b""
                 assembler = FrameAssembler()
+                if self.description is not None:
+                    self.codec_stale = True
                 print("stream: video reopened %s" % path, flush=True)
+
+            if self.codec_stale:
+                sps, pps = self._segment_codec()
+                if usable_parameter_sets(sps, pps):
+                    self.codec_stale = False
+                    if sps != self.sps or pps != self.pps:
+                        self.apply_codec(sps, pps)
+                        self.send_hello()
 
             if self.description is None and self.refresh_codec():
                 self.send_hello()
@@ -329,7 +379,7 @@ class Streamer:
             # sees the count. Wait for the reopen instead of replaying bytes at
             # a stale offset.
             if size > self.video_offset:
-                chunk = f.read(size - self.video_offset)
+                chunk = f.read(min(size - self.video_offset, VIDEO_READ_CAP))
                 self.video_offset += len(chunk)
                 buf += chunk
                 nals, buf = split_nals(buf)
@@ -366,7 +416,8 @@ class Streamer:
             self.audio_offset = max(AUDIO_HEADER, os.path.getsize(path))
         except OSError:
             self.audio_offset = AUDIO_HEADER
-        f = await self.open_when_ready(path, self.audio_offset)
+        f = await self.open_when_ready(path, self.audio_offset, at_end=True)
+        self.audio_offset = max(AUDIO_HEADER, os.fstat(f.fileno()).st_size)
         remainder = b""
         print("stream: audio_offset=%s" % self.audio_offset, flush=True)
 
@@ -388,7 +439,7 @@ class Streamer:
                 continue
 
             if size > self.audio_offset:
-                chunk = f.read(size - self.audio_offset)
+                chunk = f.read(min(size - self.audio_offset, AUDIO_READ_CAP))
                 self.audio_offset += len(chunk)
                 chunk = remainder + chunk
                 usable = len(chunk) // 4 * 4
@@ -419,19 +470,21 @@ class Streamer:
         peer = getattr(ws, "remote_address", "?")
         print("stream: client connected %s" % (peer,), flush=True)
 
-        viewer = Viewer(ws)
-        previous, self.viewer = self.viewer, viewer
-        task = asyncio.create_task(viewer.run())
-
+        # Replace the previous viewer before installing the new one: while the
+        # old socket closes (an await), the tail loops must not push video into a
+        # viewer that has not received `hello` yet.
+        previous = self.viewer
         if previous is not None:
-            # One viewer per session: the newest tab wins, and the close code
-            # tells the old page not to reconnect (`stream/web/app.js`).
             print("stream: replacing the previous viewer", flush=True)
             previous.stop()
             try:
                 await previous.ws.close(code=REPLACED_CODE, reason="replaced")
             except Exception:
                 pass
+
+        viewer = Viewer(ws)
+        self.viewer = viewer
+        task = asyncio.create_task(viewer.run())
 
         viewer.push_json(self.hello())
         await self.replay(viewer)
@@ -485,10 +538,29 @@ class Streamer:
             print("stream: client disconnected %s" % (peer,), flush=True)
 
 
-def serve_http(web_dir: str, port: int):
+def serve_http(web_dir: str, port: int, ws_port: int = DEFAULT_WS_PORT):
+    """Serve `web_dir` on loopback, plus `config.json` with the WebSocket port.
+
+    The page has to learn the WS port from the HTTP side, otherwise
+    `--ws-port` (and `AURIGA_WS_PORT`) would be lies: `app.js` fetches this
+    file before it connects.
+    """
+    config = json.dumps({"wsPort": ws_port}).encode()
+
     class Handler(SimpleHTTPRequestHandler):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, directory=web_dir, **kwargs)
+
+        def do_GET(self):
+            if self.path.split("?", 1)[0] == "/config.json":
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(config)))
+                self.end_headers()
+                self.wfile.write(config)
+                return
+            super().do_GET()
 
         def log_message(self, *_args):
             pass
@@ -496,4 +568,9 @@ def serve_http(web_dir: str, port: int):
     httpd = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
-    print("http: http://127.0.0.1:%d (web dir %s)" % (port, web_dir), flush=True)
+    print(
+        "http: http://127.0.0.1:%d (web dir %s, ws port %d)"
+        % (httpd.server_address[1], web_dir, ws_port),
+        flush=True,
+    )
+    return httpd

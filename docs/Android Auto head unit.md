@@ -56,7 +56,8 @@ Cause: `AASDK_MINOR` is `6` upstream, and `aap_protobuf` does not add absl's
 include directories.
 Workaround: `patches/aasdk-version-absl.patch` (minor → 7, absl include path on
 Darwin). A tree without that patch cannot negotiate the dongle's 1.7 session.
-Location: `include/aasdk/Version.hpp:22-23`, `protobuf/CMakeLists.txt`.
+Location: `include/aasdk/Version.hpp` (`AASDK_MAJOR`/`AASDK_MINOR`),
+`protobuf/CMakeLists.txt`.
 
 ## USB and the AOA switch
 
@@ -126,12 +127,11 @@ One AA entity is one capture session: a directory plus a `current` pointer.
 ```
 
 `ServiceFactory::create()` builds one `AurigaSessionManager` per AA entity and
-hands it to every sink, so the four files of one entity are created in the same
+hands it to every sink, so all six files of one entity are created in the same
 directory no matter how far apart the channels open
-(`ServiceFactory.cpp:132-136,178-180,197,205,231,240-241`;
-`AurigaSession.cpp:107-147`). Session ids are local time `%Y%m%d-%H%M%S`, with
-`-2`, `-3`, … appended when that id already exists
-(`AurigaSession.cpp:87-103`).
+(`ServiceFactory.cpp` video/audio/input wiring; `AurigaSession.cpp`
+session mint/publish). Session ids are local time `%Y%m%d-%H%M%S`, with
+`-2`, `-3`, … appended when that id already exists.
 
 Publication order at session start: create `session-<id>/`, write
 `manifest.json` (`manifest.json.tmp` + rename), then replace `current`
@@ -147,19 +147,19 @@ per stream:
 ```
 
 `width`, `height` and `fps` come from `Video.Resolution` and `Video.FPS` through
-`configuredVideoGeometry()` (`ServiceFactory.cpp:65-96,130-136`;
-`AurigaSession.cpp:182-191`), the same mapping that sets the touch coordinate
-space, so the stream server and the browser size the canvas from the geometry
-the phone was actually configured with. `fps` is a JSON number and may be
-fractional; `29.97` is printed as such.
+`configuredVideoGeometry()` (`ServiceFactory.cpp`; `AurigaSession.cpp`
+`writeManifest`), the same mapping that sets the touch coordinate space, so the
+stream server and the browser size the canvas from the geometry the phone was
+actually configured with. `configuredVideoGeometry()` yields 30 or 60 fps, so
+`fps` is written as an integer (`30`); fractional rates are not produced.
 
 | File | Format | Written | Rotation |
 | --- | --- | --- | --- |
-| `video.h264` | Annex-B H.264, 4-byte start codes, one AA access unit per `write()`; SPS/PPS once at the head of each segment | queued by the channel strand, written and flushed per access unit by the sink's writer thread (`AurigaVideoOutput.cpp:113-144`) | truncated and restarted at 0 before 4 GiB; the `video` count advances (`AurigaVideoOutput.cpp:138-142,146-160`) |
-| `audio-media.wav` | PCM WAV, 48 kHz, 2 ch, 16-bit | raw AA PCM after a 44-byte header; queued by the channel strand, written by the writer thread (`AurigaAudioOutput.cpp:153-176`) | restarted at 44 bytes with a fresh header before 4 GiB; the `audio-media` count advances (`AurigaAudioOutput.cpp:164-168,215-229`) |
+| `video.h264` | Annex-B H.264, 4-byte start codes, one AA access unit per `write()`; SPS/PPS once at the head of each segment | queued by the channel strand, written and flushed per access unit by the sink's writer thread (`AurigaVideoOutput.cpp`) | truncated and restarted at 0 before 4 GiB; the `video` count advances |
+| `audio-media.wav` | PCM WAV, 48 kHz, 2 ch, 16-bit | raw AA PCM after a 44-byte header; queued by the channel strand, written by the writer thread (`AurigaAudioOutput.cpp`) | restarted at 44 bytes with a fresh header before 4 GiB; the `audio-media` count advances |
 | `audio-guidance.wav` | PCM WAV, 16 kHz, 1 ch, 16-bit | same writer | same as `audio-media`, count `audio-guidance` |
 | `audio-system.wav` | PCM WAV, 16 kHz, 1 ch, 16-bit | same writer | same as `audio-media`, count `audio-system` |
-| `input.jsonl` | JSON lines `{"ts":epoch_us,"cmd","x","y"}` | flushed per line (`AurigaInputDevice.cpp:216-231`) | none |
+| `input.jsonl` | JSON lines `{"ts":epoch_us,"cmd","x","y"}` | flushed per line (`AurigaInputDevice.cpp`) | none |
 
 Each sink still opens its file with `std::ios::trunc`, but into a directory that
 was just created, so a new session never touches the previous files: a
@@ -167,18 +167,17 @@ reconnect creates a second `session-*` directory and preserves the first.
 
 Rotation uses one limit, `SEGMENT_LIMIT = 4 GiB - 16 MiB`, applied to video
 bytes and WAV data bytes so the 32-bit RIFF sizes cannot wrap
-(`AurigaSession.hpp:40`; `AurigaVideoOutput.cpp:138`,
-`AurigaAudioOutput.cpp:164`). A rotated file keeps its name and restarts at
-offset 0; the manifest count is the only rollover signal, and the old segment's
-bytes are discarded. Rotation runs on the sink's writer thread, so the manifest
-rewrite is off the channel strand too.
+(`AurigaSession.hpp`; `AurigaVideoOutput.cpp`, `AurigaAudioOutput.cpp`). A
+rotated file keeps its name and restarts at offset 0; the manifest count is the
+only rollover signal, and the old segment's bytes are discarded. Rotation runs on
+the sink's writer thread, so the manifest rewrite is off the channel strand too.
 
 Retention is bounded: a new session removes all but the newest five
 `session-*` directories, always keeping the current one
-(`AurigaSession.hpp:42`; `AurigaSession.cpp:235-281`).
+(`AurigaSession.hpp`; `AurigaSession.cpp` `prune`).
 
 WAV header: 44 bytes, RIFF/WAVE/fmt/data, 32-bit RIFF and data sizes, rewritten
-after every accumulated second of audio (`AurigaAudioOutput.cpp:153-176,178-210`).
+after every accumulated second of audio (`AurigaAudioOutput.cpp`).
 Between rewrites the header lags the file by up to 1 s of audio.
 
 `AurigaAudioOutput::start()` and `suspend()` are empty, and `autoapp` installs
@@ -189,23 +188,31 @@ boundary. `stop()` (destructor path) rewrites it.
 
 `MEDIA_MESSAGE_CODEC_CONFIG` does not share the media write path: both sink
 services hand the payload to `setCodecConfig()` instead of the media writer
-(`VideoMediaSinkService.cpp:196-212`, `AudioMediaSinkService.cpp:227-243`). The
-video sink caches the bytes and writes them once in front of the first access
-unit of each segment, so every segment starts with SPS/PPS
-(`AurigaVideoOutput.cpp:83-96,120-131`). The audio sink ignores the payload: it
+(`VideoMediaSinkService.cpp`, `AudioMediaSinkService.cpp`). The video sink caches
+the bytes and writes them in front of the first access unit of each segment, so
+every segment starts with SPS/PPS (`AurigaVideoOutput.cpp`). Config ordering is
+not guaranteed: when the phone sends it after the first access unit, the writer
+thread appends it at the current file offset and logs a warning, instead of
+losing it until the next 4 GiB rotation. The audio sink ignores the payload: it
 describes the PCM format the WAV header already carries, and appending it would
-corrupt the sample stream (`AurigaAudioOutput.cpp:108-112`).
+corrupt the sample stream (`AurigaAudioOutput.cpp`).
 
 `video.h264` therefore starts with SPS/PPS and then media only; `audio-*.wav`
 contains only the 44-byte header and PCM. NAL layout of a segment head:
 SPS at 0, PPS at 21, IDR at 29, first slice at 3645 (measured on
 `captures/2026-10-28-macos-session2-video.h264`, which carries the same head).
 
+A writer-queue overflow drops the oldest chunk and counts it. Because the deltas
+that follow reference the lost frame, the video writer then skips frames until
+the next IDR and writes SPS/PPS before it, so the file never contains an
+undecodable reference chain; the skipped interval is a visible gap, not
+corruption. The stream server sees that IDR as its resync point.
+
 ### Silent microphone
 
 The capture build advertises the microphone channel but feeds it paced silence:
 zero buffers of `sampleRate/50 * channels * bytes/sample` every 20 ms on a
-`deadline_timer` (`openauto/src/autoapp/Projection/AurigaAudioInput.cpp:62-93`).
+`deadline_timer` (`openauto/src/autoapp/Projection/AurigaAudioInput.cpp`).
 No Qt/ALSA capture path is opened.
 
 ### Input device
@@ -219,16 +226,15 @@ input FIFO. Line protocol:
 | `down X Y` | `ACTION_DOWN` |
 | `move X Y` | `ACTION_MOVED` |
 | `up X Y` | `ACTION_UP` |
-| `quit` | stops the reader thread only; `autoapp` keeps running with touch disabled |
+| `quit` | stops the reader thread only; `autoapp` keeps running with touch disabled until the next `KeyBindingRequest` restarts it |
 
 `X Y` are in the configured video geometry (`1280x720` with `Video.Resolution=2`).
 The device starts only after the phone sends `KeyBindingRequest`
-(`openauto/src/autoapp/Service/InputSource/InputSourceService.cpp:120-131`);
+(`openauto/src/autoapp/Service/InputSource/InputSourceService.cpp`);
 earlier FIFO lines are never read. The 80 ms `tap` sleep runs on the single
 reader thread, so `down`/`move`/`up` behind a tap wait for it
-(`AurigaInputDevice.cpp:165-175`). The FIFO needs a live writer or `read()`
-returns EOF and the reader exits; `scripts/auriga.sh` parks one long-lived
-`sleep` on it.
+(`AurigaInputDevice.cpp`). The FIFO needs a live writer or `read()` returns EOF
+and the reader exits; `scripts/auriga.sh` parks one long-lived `sleep` on it.
 
 ### Configuration that capture mode honours
 
@@ -236,24 +242,24 @@ returns EOF and the reader exits; `scripts/auriga.sh` parks one long-lived
 
 | Key | Value | Effect |
 | --- | --- | --- |
-| `Video.Resolution` | `2` | 1280x720; also sets the touch geometry (`ServiceFactory.cpp:149-152`) |
+| `Video.Resolution` | `2` | 1280x720; also sets the touch geometry (`ServiceFactory.cpp` `configuredVideoGeometry`) |
 | `Video.FPS` | `2` | 30 fps (`ServiceFactory` uses the same enum mapping) |
 | `AudioChannel.MediaEnabled` / `GuidanceEnabled` | `true` | creates the corresponding sink |
 | `AudioChannel.TelephonyEnabled` | `false` | the telephony block in `ServiceFactory` is commented out, so the service is never created |
-| `Bluetooth.WirelessProjectionEnabled` | `true` | registers the Bluetooth service (`ServiceFactory.cpp:115-125`) |
+| `Bluetooth.WirelessProjectionEnabled` | `true` | registers the Bluetooth service (`ServiceFactory.cpp` Bluetooth block) |
 | `Bluetooth.AdapterAddress` | empty | selects `DummyBluetoothDevice` |
-| `Audio.OutputBackendType`, `Input.EnableTouchscreen`, `Input.EnablePlayerControl`, `Bluetooth.AdapterType` | — | parsed but not read by any code path; inert |
+| `Audio.OutputBackendType`, `Input.EnableTouchscreen`, `Input.EnablePlayerControl`, `Bluetooth.AdapterType` | — | inert in capture mode only: the Qt/RtAudio backends and the Qt input device are replaced, so the values are never read on that path; a non-capture run uses them |
 
 ## AA session behaviour
 
 Advertised services, built per AA entity: video sink, media/guidance/system
 audio sinks, microphone source, sensor source, input source, and Bluetooth when
 `WirelessProjectionEnabled` is true. The same call mints one capture session and
-publishes `current` (`ServiceFactory.cpp:123-153`). Android Auto over Wi-Fi (WPP)
-and telephony audio are not advertised (`ServiceFactory.cpp:123-153,212-225`).
+publishes `current` (`ServiceFactory.cpp`). Android Auto over Wi-Fi (WPP)
+and telephony audio are not advertised (`ServiceFactory.cpp`).
 
 Identity and ping values in the service-discovery response
-(`openauto/src/autoapp/Service/AndroidAutoEntity.cpp:178-203`):
+(`openauto/src/autoapp/Service/AndroidAutoEntity.cpp`):
 
 | Field | Value |
 | --- | --- |
@@ -266,21 +272,22 @@ Identity and ping values in the service-discovery response
 | ping interval / timeout / tracked | 1000 ms / 3000 ms / 5 |
 
 The identity strings are patched in `patches/openauto-auriga-identity.patch`;
-`display_name` is set once, in the `headunit_info` block.
+`display_name` is set once before the `connection_configuration` block, outside
+`headunit_info`.
 
 The ping values are advertised, not implemented: the pinger runs on a 5000 ms
 timer with one outstanding request and rejects the entity once 5 pings are
-unanswered (`openauto/src/autoapp/Service/AndroidAutoEntityFactory.cpp:65`,
-`openauto/src/autoapp/Service/Pinger.cpp:29-62`).
+unanswered (`openauto/src/autoapp/Service/AndroidAutoEntityFactory.cpp`,
+`openauto/src/autoapp/Service/Pinger.cpp`).
 
-Sensor service (`openauto/src/autoapp/Service/Sensor/SensorService.cpp:30-48,238-260`):
+Sensor service (`openauto/src/autoapp/Service/Sensor/SensorService.cpp`):
 driving status `UNRESTRICTED`, night mode from the existence of
-`/tmp/night_mode_enabled`, GPS polled every 250 ms and read only when
-`gps_open("127.0.0.1","2947")` succeeded. Without `gpsd` the service logs
-`can't connect to GPSD` and never calls `gps_read`.
+`/tmp/night_mode_enabled` (re-read on the 250 ms timer), GPS polled every 250 ms
+and read only when `gps_open("127.0.0.1","2947")` succeeded. Without `gpsd` the
+service logs `can't connect to GPSD` and never calls `gps_read`.
 
-Bluetooth service (`BluetoothService.cpp:60-141`): with the dummy device
-(`DummyBluetoothDevice.cpp:30-42`, `isAvailable() == false`) it advertises
+Bluetooth service (`BluetoothService.cpp`): with the dummy device
+(`DummyBluetoothDevice.cpp`; `isAvailable()` returns `false`) it advertises
 `car_address=""` and `BLUETOOTH_PAIRING_UNAVAILABLE`. A pairing request always
 gets `STATUS_SUCCESS`, `already_paired=false`, then authentication data with PIN
 `123456`.
@@ -294,41 +301,43 @@ occur, so the dongle cannot have rejected a pairing at that point. The first
 entity's USB transfer fails on the dongle side; the trigger is not identified in
 the log.
 Workaround: let OpenAuto reconnect; if the dongle stays in AOA, replug it.
-Location: `logs/openauto-mac-*.log`; `App.cpp:243-249` retry path.
+Location: `logs/openauto-mac-*.log`; `App.cpp` (`onAndroidAutoQuit`,
+`waitForDevice`).
 
 ## Threading and the real-time boundary
 
 `autoapp` runs one Qt main thread (`qApplication.exec()`), four
 `io_service.run()` threads and four libusb event threads
-(`openauto/src/autoapp/autoapp.cpp:46-73`). Each service owns a
+(`openauto/src/autoapp/autoapp.cpp`). Each service owns a
 `boost::asio::strand` and hands the same strand to its aasdk channel, so channel
 receive, the queue copy, ACK send and `stop()` are serialized per service.
 `AurigaInputDevice` adds one raw reader thread on stdin; `AurigaAudioInput` and
 `SensorService` use `deadline_timer` callbacks, not threads.
 
 Media flow control: each media channel requests `max_unacked=1`
-(`VideoMediaSinkService.cpp:117`, `AudioMediaSinkService.cpp:174`). The media ACK
+(`VideoMediaSinkService.cpp`, `AudioMediaSinkService.cpp`). The media ACK
 is sent *before* the sink is asked to accept the buffer
-(`VideoMediaSinkService.cpp:180-190`, `AudioMediaSinkService.cpp:211-221`), and
+(`VideoMediaSinkService.cpp`, `AudioMediaSinkService.cpp`), and
 the sink's `write()` only copies into a bounded in-memory queue
-(`AurigaWriter.hpp:79-115`). No media buffer touches the disk on the channel
+(`AurigaWriter.hpp`). No media buffer touches the disk on the channel
 strand and no disk latency sits in the flow-control window, so a slow disk cannot
 stall the phone's next frame (`NFR-01`). Channel open and stop still open,
 truncate and close the file once, on the strand, before the writer starts.
 
 Each sink owns one writer thread that drains that queue to the segment file,
 flushes per access unit and performs rotation, retention bookkeeping and the WAV
-header rewrite (`AurigaVideoOutput.cpp:113-160`,
-`AurigaAudioOutput.cpp:153-229`). The queue is bounded at 240 chunks and 64 MiB
-(`AurigaWriter.hpp:42-45`); when a sink cannot keep up the oldest chunk is
-dropped and counted, never blocked on, and the first drop plus every 100th is
-logged. `stop()` drains the queue and joins the writer thread before closing the
-file, so a normal stop still finalizes the WAV header.
+header rewrite (`AurigaVideoOutput.cpp`, `AurigaAudioOutput.cpp`). The queue is
+bounded at 240 chunks and 64 MiB (`AurigaWriter.hpp`); when a sink cannot keep
+up the oldest chunk is dropped and counted, never blocked on, and the first drop
+plus every 100th is logged. The video writer then skips deltas until the next
+IDR (re-emitting SPS/PPS) so a dropped frame does not leave an undecodable
+reference chain in the file. `stop()` drains the queue and joins the writer
+thread before closing the file, so a normal stop still finalizes the WAV header.
 
 `AurigaSessionManager` mints the session and publishes `current` on the
 entity-creation path. `noteRotation` rewrites `manifest.json` from the sink's
-writer thread, at most once per 4 GiB per stream (`AurigaSession.cpp:164-178`;
-`AurigaVideoOutput.cpp:138-142`, `AurigaAudioOutput.cpp:164-168`).
+writer thread, at most once per 4 GiB per stream (`AurigaSession.cpp`;
+`AurigaVideoOutput.cpp`, `AurigaAudioOutput.cpp`).
 
 ## AA stream format
 
@@ -367,24 +376,28 @@ aasdk's CMake). aasdk never inspects or logs the peer certificate.
 
 | Verb | Effect |
 | --- | --- |
-| `start` | creates the FIFO and its writer, starts `autoapp` (offscreen capture), starts the stream server, starts `caffeinate`, polls `127.0.0.1:8080` until it listens, writes the lock, opens the browser |
+| `start` | creates the FIFO and its writer (reaping stale writers first), starts `autoapp` (offscreen capture), starts the stream server with the configured ports, polls the HTTP and WS listeners, starts `caffeinate`, writes the lock, opens the browser |
 | `status` | pids of `autoapp` and the stream server, both listening ports, the `current` session; exits non-zero unless both run |
-| `stop` | SIGTERM to the pids in the lock (cmdline-checked), waits, SIGKILLs, `pkill` for orphans, removes the FIFO and the lock |
+| `stop` | SIGTERM to the pids in the lock (cmdline-checked), waits, SIGKILLs, `pkill` for `autoapp`/stream/FIFO-writer orphans, removes the FIFO and the lock |
 
 - The lock is `<capture-dir>/.auriga.lock`, one `role pid` line per component.
   `start` refuses while a live pid is in it, and refuses a running `autoapp` of
   the same build. That is the one-pair-per-capture-dir guarantee; `pgrep` is
   only a fallback for orphans left by a lost lock file.
-- `AURIGA_CAPTURE_DIR` (default `<repo>/captures-mac`) and
-  `AURIGA_INPUT_FIFO` (default `/tmp/auriga-in`) are resolved once in
-  `scripts/auriga.sh` and exported. `openauto-config/run.sh` has no defaults and
+- `AURIGA_CAPTURE_DIR` (default `<repo>/captures-mac`),
+  `AURIGA_INPUT_FIFO` (default `/tmp/auriga-in`), `AURIGA_HTTP_PORT` (8080) and
+  `AURIGA_WS_PORT` (8081) are resolved once in `scripts/auriga.sh` and exported
+  or passed on the command line. `openauto-config/run.sh` has no defaults and
   fails without them, so the FIFO the browser writes and the FIFO `autoapp`
-  reads cannot diverge.
-- Readiness is a poll of the 8080 listen socket (`nc -z`, 20 s,
+  reads cannot diverge. The page learns the WS port from `config.json`, which the
+  stream server serves on the HTTP port.
+- Readiness is a poll of both listen sockets (`nc -z`, 20 s,
   `AURIGA_READY_TIMEOUT`). A stream server that dies, for example on
   `EADDRINUSE`, is reported with its log tail instead of a "started" banner.
 - The FIFO writer is one long-lived `sleep` holding the write side open; EOF
-  would stop the input reader for the rest of the run.
+  would stop the input reader for the rest of the run. A writer left over from a
+  previous run is killed before the FIFO is recreated, so it cannot hold the old
+  inode.
 
 ## Verification
 
@@ -397,8 +410,10 @@ pgrep -fl "autoapp|auriga_stream"
 adb -s RFGL329J04J shell svc usb getFunctions          # expect: mtp
 ioreg -p IOUSB -l -w 0 | grep -E 'o (AutoLink|SAMSUNG_Android)@|"idProduct" = (26720|11520|11521|65344)'
 tail -20 "$(ls -t logs/openauto-mac-*.log | head -1)"  # Version Received + pings
-ffmpeg -loglevel info -i captures-mac/video.h264 -f null - 2>&1 | tail -1
+ffmpeg -loglevel info -i captures-mac/current/video.h264 -f null - 2>&1 | tail -1
 ```
 
 Expected: dongle `18d1:2d00`, phone `04e8:6860` and `svc usb getFunctions` =
-`mtp`, at least one `Version Received: 256.1792`, and a growing video file.
+`mtp`, at least one `Version Received: 256.1792`, and a growing video file under
+`captures-mac/current/` (the symlink to the live `session-<id>/`; `current` only
+exists after the first AA session of the current code).

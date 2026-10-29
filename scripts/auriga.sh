@@ -18,8 +18,10 @@ PY=${AURIGA_PYTHON:-$BASE/.venv/bin/python}
 
 LOCK=$CAPTURE_DIR/.auriga.lock
 START_GUARD=$CAPTURE_DIR/.auriga.start
-HTTP_PORT=8080
-WS_PORT=8081
+# One source for the ports: the same values go to the stream server (which also
+# serves them to the page as config.json), the readiness poll and the URL.
+HTTP_PORT=${AURIGA_HTTP_PORT:-8080}
+WS_PORT=${AURIGA_WS_PORT:-8081}
 READY_TIMEOUT=${AURIGA_READY_TIMEOUT:-20}
 STAMP=$(date +%Y%m%d-%H%M%S)
 AUTOAPP_LOG=$LOG_DIR/openauto-mac-$STAMP.log
@@ -83,7 +85,7 @@ take_guard() {
     fi
     rm -rf "$START_GUARD"
   fi
-  mkdir "$START_GUARD"
+  mkdir "$START_GUARD" 2>/dev/null || die "another start is in progress"
   echo $$ >"$START_GUARD/pid"
 }
 
@@ -108,6 +110,9 @@ wait_port() {
 }
 
 start_fifo() {
+  # A writer left over from an earlier run (lost lock, killed start) holds the
+  # old inode; the new FIFO would never see it. Reap them before recreating.
+  pkill -f "sleep $FIFO_WRITER_SECONDS" 2>/dev/null || true
   rm -f "$FIFO"
   mkfifo "$FIFO"
   sleep "$FIFO_WRITER_SECONDS" >"$FIFO" 2>/dev/null &
@@ -123,7 +128,8 @@ start_autoapp() {
 start_stream() {
   [ -f "$STREAM_DIR/auriga_stream.py" ] || die "missing $STREAM_DIR/auriga_stream.py"
   ( cd "$STREAM_DIR" && exec nohup "$PY" auriga_stream.py \
-      --capture-dir "$CAPTURE_DIR" --fifo "$FIFO" >"$STREAM_LOG" 2>&1 ) &
+      --capture-dir "$CAPTURE_DIR" --fifo "$FIFO" \
+      --http-port "$HTTP_PORT" --ws-port "$WS_PORT" >"$STREAM_LOG" 2>&1 ) &
   STREAM_PID=$!
 }
 
@@ -167,9 +173,10 @@ print_summary() {
 open_browser() {
   if open -a "Brave Browser" "http://localhost:$HTTP_PORT" 2>/dev/null; then
     say "opened Brave at http://localhost:$HTTP_PORT"
-  else
-    open "http://localhost:$HTTP_PORT" 2>/dev/null || true
+  elif open "http://localhost:$HTTP_PORT" 2>/dev/null; then
     say "opened the default browser at http://localhost:$HTTP_PORT"
+  else
+    say "could not open a browser; open http://localhost:$HTTP_PORT"
   fi
 }
 
@@ -204,6 +211,11 @@ cmd_start() {
 
   if ! wait_port "$HTTP_PORT" "$READY_TIMEOUT"; then
     echo "auriga: stream server did not listen on 127.0.0.1:$HTTP_PORT within ${READY_TIMEOUT}s" >&2
+    rollback_start
+    exit 1
+  fi
+  if ! wait_port "$WS_PORT" "$READY_TIMEOUT"; then
+    echo "auriga: stream server did not listen on 127.0.0.1:$WS_PORT within ${READY_TIMEOUT}s" >&2
     rollback_start
     exit 1
   fi
@@ -259,6 +271,7 @@ cmd_stop() {
   # Orphans survive a lost lock file (nohup detaches them to pid 1).
   pkill -f "$AUTOAPP_PGREP" 2>/dev/null || true
   pkill -f "$STREAM_PGREP" 2>/dev/null || true
+  pkill -f "sleep $FIFO_WRITER_SECONDS" 2>/dev/null || true
 
   rm -f "$FIFO" "$LOCK" /tmp/auriga-mac-autoapp.pid /tmp/auriga-mac-stream.pid \
     /tmp/auriga-mac-caffeinate.pid /tmp/auriga-fifo-writer.pid

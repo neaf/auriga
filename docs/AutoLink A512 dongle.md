@@ -18,7 +18,7 @@ directly).
 | CarPlay | `05ac:12a8` | Apple | Neither matched, ignored without a log (`USBHub.cpp:89-96,115`) |
 
 `2717` is the Xiaomi vendor ID that the dongle reuses; it is not a dongle
-property (`tools/aoa_probe.py:5`). The IDs are observed on this host with
+property (`tools/aoa_probe.py`, `VID`). The IDs are observed on this host with
 `ioreg`; no vendor datasheet is in the repo, so they are `unverified` as vendor
 facts beyond observation.
 
@@ -65,20 +65,21 @@ stored.
 
 Two bulk endpoints, IN `0x81` and OUT `0x02`, 512-byte packets. `unverified`
 (doc-derived): aasdk assumes exactly two endpoints and picks IN/OUT by the
-endpoint-address bit (`aasdk-upstream/src/USB/AOAPDevice.cpp:28-39`);
-`tools/aoa_read.py:43` reads 512-byte chunks.
+endpoint-address bit (`aasdk-upstream/src/USB/AOAPDevice.cpp`);
+`tools/aoa_read.py` reads 512-byte chunks.
 
 ## AA protocol version
 
 The session negotiates AA 1.7, logged as `Version Received: 256.1792`
 (`logs/openauto-mac-*.log`). aasdk advertises major 1, minor 7
-(`aasdk-upstream/include/aasdk/Version.hpp:22-23`). The minor bump is
-`patches/aasdk-version-absl.patch`; the same patch adds the absl include path to
-`aap_protobuf` (`docs/Build.md#aasdk`).
+(`aasdk-upstream/include/aasdk/Version.hpp`, `AASDK_MAJOR`/`AASDK_MINOR`). The
+minor bump is `patches/aasdk-version-absl.patch`; the same patch adds the absl
+include path to `aap_protobuf` (`docs/Build.md#aasdk`).
 
 ## MTP config store
 
-Eight flat files with dynamic MTP IDs.
+Flat files with dynamic MTP IDs; `btapp.bk` is absent on the dongle today, so
+seven slots are populated.
 
 | File | Size | Current value | Backup |
 | --- | ---: | --- | --- |
@@ -94,15 +95,36 @@ Eight flat files with dynamic MTP IDs.
 Config writes are manual MTP operations only (`mtp-files`, `mtp-getfile`,
 `mtp-delfile`, `mtp-sendfile`); no code writes them. `mtp-sendfile` uses the
 local basename as the remote name, so stage files under the exact remote name.
-Delete or upload one file at a time and re-list the eight slots afterwards.
-Sizes for the on-dongle files come from `dongle-backup/README.md`; `carplay.key`
-(1433 B) and `800x480-A512.h264` (34,134 B) are `unverified`, because neither is
-in the repo.
+Delete or upload one file at a time and re-list the slots afterwards. Sizes for
+the on-dongle files are the ones in the table above (measured from the backups;
+`mtp-files` lists the live slots); `carplay.key` (1433 B) and
+`800x480-A512.h264` (34,134 B) are `unverified`, because neither is in the repo.
+
+### MTP procedure
+
+```bash
+# list the slots (IDs are dynamic; always match by filename)
+sudo mtp-files
+
+# replace one file: stage it under the exact remote name first
+mkdir -p /tmp/restore
+cp dongle-backup/videoInfo.orig /tmp/restore/videoInfo
+sudo mtp-delfile -f videoInfo
+cd /tmp/restore && sudo mtp-sendfile videoInfo videoInfo
+
+# verify by downloading it again
+sudo mtp-getfile <file-id> /tmp/check && sudo cmp /tmp/restore/videoInfo /tmp/check
+```
+
+Restore only `videoInfo.orig` or `videoInfo.car-trip`; the `videoInfo.galaxy`
+snapshots are invalid. The current Bluetooth pairing DB is
+`dongle-backup/btapp.db.galaxy-fresh` (33 B); the 207-byte DBs hold stale link
+keys.
 
 ### `videoInfo` layout
 
-364 bytes, little-endian, verified by byte inspection of all five snapshots in
-`dongle-backup/` and `posttrip/`.
+364 bytes, little-endian, verified by byte inspection of the snapshots in
+`dongle-backup/`.
 
 | Offset | Type | Value | Meaning |
 | ---: | --- | --- | --- |
@@ -110,7 +132,7 @@ in the repo.
 | `0x04` | u32 | 1280; 0 in `videoInfo.galaxy` | width |
 | `0x08` | u32 | 720; 0 in `videoInfo.galaxy` | height |
 | `0x0c` | u32 | 0 (`orig`, `galaxy`), 2 (`car-trip`) | unknown, `unverified` |
-| `0x10` | u32 | `0x815` (`orig`, `car-trip`), 0 (`galaxy`) | unknown, `unverified` |
+| `0x10` | 2 bytes | `15 08` = `0x0815` (`orig`, `car-trip`), 0 (`galaxy`) | unknown, `unverified`; the Annex-B start code follows immediately at `0x12` |
 | `0x12` | 4 bytes | `00 00 00 01`; absent in `galaxy` | Annex-B start code |
 | `0x16` | 17 bytes | `67 42 80 20 da 01 40 16 e9 48 28 30 30 36 85 09 a8` | SPS, Baseline 3.2 (profile `0x42`, constraint `0x80`, level `0x20`) |
 | `0x27` | 4 bytes | `00 00 00 01`; absent in `galaxy` | Annex-B start code |
@@ -121,16 +143,17 @@ in the repo.
 | `0x72` | 8 bytes | `1493 _0\0`; zero in `galaxy` | session tag |
 | `0x168` | u32 | `4e2d347c` (`orig`), `5e205bfd` (`car-trip`), `576e7e45` (`galaxy`) | unknown, `unverified` |
 
-`videoInfo.car-trip` differs from `videoInfo.orig` in 6 SPS bytes
-(`0x1e..0x23`), the PPS level byte and the `0x0c` field. It records a real car
-head unit (`T  M918500`), not the bench config.
+`videoInfo.car-trip` differs from `videoInfo.orig` in 4 SPS bytes
+(`0x1e..0x21`), the PPS level byte at `0x2e`, the `0x0c` field, the 10-byte
+head-unit name (`0x68..0x71`) and the u32 at `0x168`. It records a real car head
+unit (`T  M918500`), not the bench config.
 
 ### Backup inventory
 
 | File | Size | Status |
 | --- | ---: | --- |
 | `dongle-backup/videoInfo.orig` | 364 B | valid bench config: OPPO address, `auriga-pi`, Baseline 3.2 SPS/PPS |
-| `dongle-backup/videoInfo.car-trip` | 364 B | valid car-trip snapshot; byte-identical to `posttrip/videoInfo.post` |
+| `dongle-backup/videoInfo.car-trip` | 364 B | valid car-trip snapshot (the former `posttrip/videoInfo.post` duplicate is deleted with `posttrip/`) |
 | `dongle-backup/videoInfo.galaxy` | 364 B | invalid: `0x04` and `0x08` are 0, `0x12..0x4f` are 0 (no start codes, no SPS, no PPS), `0x72..0x79` are 0. Do not restore |
 | `dongle-backup/videoInfo.galaxy.active` | 364 B | byte-identical to `videoInfo.galaxy`, so also invalid |
 | `dongle-backup/btapp.db.galaxy-fresh` | 33 B | current pairing DB; sha256 `f6b4b7e6…`; current but `unverified` |
@@ -139,7 +162,6 @@ head unit (`T  M918500`), not the bench config.
 | `dongle-backup/bt.mac.txt` | 13 B | `EDA2A4944FB8` plus newline |
 | `dongle-backup/ly_linktype_aa` | 1 B | `0x01` |
 | `dongle-backup/ly-AutoLink-A512.orig` | 8 B | `OPPO A72`, no NUL |
-| `posttrip/` | 4 files present locally | byte-identical duplicates of `videoInfo.car-trip` (`videoInfo.post`), `btapp.db.orig` (`btapp.db.post`), `ly_linktype_aa`, `ly-AutoLink-A512.orig`; canonical copies stay in `dongle-backup/` |
 
 The `*.db`/`*.bk` files are gitignored and untracked, so a fresh clone has no
 pairing DB. `btapp.db.galaxy-fresh` is the only backup of the current link key;
@@ -175,7 +197,7 @@ the trailer check, so the failure is semantic, not checksum-detected.
 Workaround: delete `btapp.db` and `btapp.bk` over MTP, cold boot
 (unplug/replug), re-pair with the 6-digit numeric comparison. The dongle
 recreates a 33-byte `btapp.db`; `btapp.bk` is not recreated.
-Location: MTP operations only; `dongle-backup/README.md`.
+Location: MTP operations only; see `### MTP procedure` above.
 
 ### Stuck in AOA with a stale TLS session
 
@@ -204,9 +226,9 @@ Whether the latch is reachable without an iPhone is `unverified`.
 Symptom: a cold `autoapp` can start between arrivals and wait at
 `Waiting for device...`.
 Cause: while idle in MTP the dongle re-enumerates roughly every 22.0 s; this is
-the de-facto discovery watchdog (`tools/aoa_probe.py:4-7`).
+the de-facto discovery watchdog (`tools/aoa_probe.py`, module docstring).
 Workaround: leave `autoapp` running; it catches the next arrival.
-Location: `tools/aoa_probe.py:90` polls every 0.25 s. The interval was measured
+Location: `tools/aoa_probe.py` polls every 0.25 s. The interval was measured
 on 2026-10-28 and not re-measured after the BT DB reset: `unverified`.
 
 ## Bluetooth and Wi-Fi identity
@@ -229,5 +251,5 @@ setup.
 Cause: nothing validates the file; every safeguard is prose in a README.
 Workaround: check magic `03 07 24 20`, width 1280 at `0x04`, height 720 at
 `0x08`, a start code at `0x12`, PPS at `0x27` and a non-zero phone address at
-`0x54` before uploading.
-Location: none in the repo; procedure in `dongle-backup/README.md`.
+`0x54` before uploading. The checks are the procedure; nothing in the repo runs
+them.

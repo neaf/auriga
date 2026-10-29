@@ -121,8 +121,8 @@ The stream is designed to be consumed by another local process:
   offline work, the capture files are the same H.264/WAV data.
 - Only one `autoapp`/stream pair should own the dongle and capture directory.
 
-See [`stream/README.md`](stream/README.md) for the full protocol and client
-behavior.
+See [`docs/Stream protocol.md`](docs/Stream%20protocol.md) for the full protocol
+and client behavior.
 
 ## USB / phone invariants
 

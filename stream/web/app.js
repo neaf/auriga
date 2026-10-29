@@ -6,12 +6,13 @@ const statusEl = document.getElementById("status");
 const statsEl = document.getElementById("stats");
 const muteBtn = document.getElementById("mute");
 
-const WS_PORT = 8081;
+const WS_PORT = 8081;           // fallback; the server's config.json is authoritative
 const REPLACED_CODE = 4001;      // close code: another tab took the stream
 const GAP_US = 250000;           // a jump this large means frames were dropped
 const MAX_QUEUE = 2400;          // hard cap on chunks pending in the decoder
 
 let ws = null;
+let wsPort = WS_PORT;
 let decoder = null;
 let configured = false;
 let needKey = true;              // drop deltas until the next keyframe
@@ -21,6 +22,7 @@ let audioCtx = null;
 let muted = true;
 let firstAudioTs = null;
 let audioBaseTime = 0;
+let audioSources = [];           // scheduled nodes, stopped on mute
 let lastVideoTs = null;
 let dragging = false;
 let moved = false;
@@ -35,11 +37,26 @@ function setStatus(text) {
   statusEl.textContent = text;
 }
 
+// The port comes from the server, so `auriga.sh` can move the WS listener
+// without editing this file (`stream/server.py` serves /config.json).
+async function loadConfig() {
+  try {
+    const response = await fetch("config.json", { cache: "no-store" });
+    if (!response.ok) return;
+    const config = await response.json();
+    if (Number.isInteger(config.wsPort) && config.wsPort > 0 && config.wsPort < 65536) {
+      wsPort = config.wsPort;
+    }
+  } catch {
+    // Keep the fallback: an older server without config.json still works.
+  }
+}
+
 function connect() {
   if (replaced) return;
   closeSocket();
   const host = location.hostname || "localhost";
-  const socket = new WebSocket(`ws://${host}:${WS_PORT}`);
+  const socket = new WebSocket(`ws://${host}:${wsPort}`);
   ws = socket;
   socket.binaryType = "arraybuffer";
 
@@ -48,6 +65,8 @@ function connect() {
     configured = false;
     keyframePending = false;
     teardownDecoder();
+    firstAudioTs = null;
+    stopAudioSources();
     if (event.code === REPLACED_CODE) {
       replaced = true;
       setStatus("another tab took over this stream");
@@ -89,6 +108,7 @@ function handleJson(message) {
     lastVideoTs = null;
     teardownDecoder();
     firstAudioTs = null;
+    stopAudioSources();
     videoFrames = 0;
     droppedFrames = 0;
     setStatus("AA session reset, waiting for stream…");
@@ -190,7 +210,10 @@ function handleBinary(buffer) {
       return;
     }
     if (decoder.decodeQueueSize > MAX_QUEUE) {
-      needKey = true;
+      // The pending queue is ~80 s of video: waiting for the encoder IDR would
+      // freeze the picture. Ask for a GOP replay instead (bounded, decodable).
+      droppedFrames++;
+      requestKeyframe();
       return;
     }
     lastVideoTs = timestamp;
@@ -211,8 +234,9 @@ function handleBinary(buffer) {
   const now = performance.now();
   if (now - lastStats > 1000) {
     lastStats = now;
+    const audioState = !audioCtx || muted ? "off" : audioCtx.state;
     statsEl.textContent = `frames ${videoFrames} · dropped ${droppedFrames}` +
-      ` · audio ${audioCtx ? "on" : "off"}`;
+      ` · audio ${audioState}`;
   }
 }
 
@@ -264,7 +288,18 @@ function playAudio(timestamp, payload) {
   const source = audioCtx.createBufferSource();
   source.buffer = buffer;
   source.connect(audioCtx.destination);
+  source.onended = () => {
+    audioSources = audioSources.filter((node) => node !== source);
+  };
+  audioSources.push(source);
   source.start(Math.max(when, audioCtx.currentTime + 0.01));
+}
+
+function stopAudioSources() {
+  for (const source of audioSources) {
+    try { source.stop(); } catch {}
+  }
+  audioSources = [];
 }
 
 function pointFromEvent(event) {
@@ -283,6 +318,10 @@ function sendInput(type, point) {
 }
 
 canvas.addEventListener("pointerdown", (event) => {
+  // Primary pointer only: a right click or a second finger must not become an
+  // AA tap/up pair (a context click is not a touch on the phone).
+  if (!event.isPrimary) return;
+  if (event.pointerType === "mouse" && event.button !== 0) return;
   canvas.setPointerCapture(event.pointerId);
   dragStart = pointFromEvent(event);
   lastPoint = dragStart;
@@ -317,7 +356,8 @@ canvas.addEventListener("pointerup", (event) => {
   if (moved) {
     sendInput("up", point);
   } else {
-    sendInput("tap", point);
+    // A tap is the press point, not where the finger drifted before release.
+    sendInput("tap", dragStart || point);
   }
   dragStart = null;
   lastPoint = null;
@@ -338,7 +378,10 @@ function setMuted(value) {
   muteBtn.setAttribute("aria-label", muted ? "Audio muted" : "Audio on");
 
   if (muted) {
-    if (audioCtx) audioCtx.suspend();
+    if (audioCtx) {
+      audioCtx.suspend();
+      stopAudioSources();
+    }
   } else {
     ensureAudio();
     if (audioCtx) {
@@ -352,4 +395,4 @@ function setMuted(value) {
 muteBtn.addEventListener("click", () => setMuted(!muted));
 setMuted(true);
 
-connect();
+loadConfig().then(connect);

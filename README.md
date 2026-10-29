@@ -48,7 +48,8 @@ video, audio and input streams and later forwarding them to a real head unit.
 - Capture artifacts: `captures/2026-10-28-session2-video.h264`,
   `2026-10-28-session2-audio-media.wav`, extracted frames and
   `2026-10-28-session2-input.jsonl`. The stream can be viewed live with
-  `ffplay` over SSH; `scripts/aa-tap.sh` injects touches.
+  `ffplay` over SSH; touches are injected with
+  `echo 'tap 640 360' > /tmp/auriga-in`.
 
 **2026-10-28 macOS port: projection works**
 
@@ -65,8 +66,9 @@ video, audio and input streams and later forwarding them to a real head unit.
 - Verified capture: 3057 H.264 frames over 122 s, 68.6 s media audio (mean
   -16.5 dB), browser/FIFO touch input (a Spotify pause/play tap changed the
   UI), and a WebSocket client receiving keyframes/deltas/audio on localhost.
-- Run/stop: `scripts/mac-headunit-start.sh` / `mac-headunit-stop.sh`;
-  captures go to `captures-mac/`; no Pi, hub or SSH tunnel.
+- Run/stop: `scripts/auriga.sh start` / `stop`; captures go to
+  `captures-mac/current/` (the `session-<id>/` directory); no Pi, hub or SSH
+  tunnel.
 - The Galaxy S25 can stay on the Mac's USB for `adb` while AA runs: `autoapp`
   only AOA-switches the dongle (`2717:ff40`), so the phone stays in MTP+ADB
   (`04e8:6860`). Capture mode skips the all-device AOA enumerator.
@@ -185,7 +187,7 @@ Versions of this file:
 | --- | --- | --- | --- |
 | `dongle-backup/videoInfo.orig` | `14:47:2D:4C:20:1A` (OPPO) | `auriga-pi` | original bench config |
 | `dongle-backup/videoInfo.car-trip` | `14:47:2D:4C:20:1A` (OPPO) | `T  M91850...` | written by the real car trip |
-| `dongle-backup/videoInfo.galaxy` | `5C:D3:3D:56:71:F4` (Galaxy) | `auriga-pi` | current active config |
+| `dongle-backup/videoInfo.galaxy` | `5C:D3:3D:56:71:F4` (Galaxy) | `auriga-pi` | invalid: zero width/height/SPS/PPS/tag; do not restore |
 
 ### `btapp.db` / `btapp.bk`
 

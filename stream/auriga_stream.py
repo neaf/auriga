@@ -29,22 +29,35 @@ DEFAULT_CAPTURE_DIR = str(
 async def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--capture-dir", default=DEFAULT_CAPTURE_DIR)
-    parser.add_argument("--fifo", default="/tmp/auriga-in")
+    parser.add_argument("--fifo", default=os.environ.get("AURIGA_INPUT_FIFO", "/tmp/auriga-in"))
     parser.add_argument("--http-port", type=int, default=8080)
     parser.add_argument("--ws-port", type=int, default=8081)
     parser.add_argument("--web", default=str(Path(__file__).resolve().parent / "web"))
     args = parser.parse_args()
 
-    serve_http(args.web, args.http_port)
+    serve_http(args.web, args.http_port, args.ws_port)
     streamer = Streamer(args.capture_dir, args.fifo)
 
-    asyncio.create_task(streamer.session_loop())
-    asyncio.create_task(streamer.video_loop())
-    asyncio.create_task(streamer.audio_loop())
+    tasks = [
+        asyncio.create_task(streamer.session_loop()),
+        asyncio.create_task(streamer.video_loop()),
+        asyncio.create_task(streamer.audio_loop()),
+    ]
+    for task in tasks:
+        task.add_done_callback(_report_failure)
 
     async with websockets.serve(streamer.handle, "127.0.0.1", args.ws_port, max_size=None):
         print("ws: ws://127.0.0.1:%d (capture dir %s)" % (args.ws_port, args.capture_dir), flush=True)
         await asyncio.Future()
+
+
+def _report_failure(task):
+    """A tail loop that ends is a bug; say so instead of going quiet."""
+    if task.cancelled():
+        return
+    error = task.exception()
+    if error is not None:
+        print("stream: tail loop failed: %r" % (error,), flush=True)
 
 
 if __name__ == "__main__":

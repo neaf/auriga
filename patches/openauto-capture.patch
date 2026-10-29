@@ -295,21 +295,25 @@ index 0000000..4a0227e
 +}
 diff --git a/include/f1x/openauto/autoapp/Projection/AurigaVideoOutput.hpp b/include/f1x/openauto/autoapp/Projection/AurigaVideoOutput.hpp
 new file mode 100644
-index 0000000..9a9d06f
+index 0000000..e15704c
 --- /dev/null
 +++ b/include/f1x/openauto/autoapp/Projection/AurigaVideoOutput.hpp
-@@ -0,0 +1,67 @@
+@@ -0,0 +1,78 @@
 +/*
 +*  This file is part of openauto project.
 +*
 +*  Auriga capture output: appends H.264 Annex-B access units to the current
 +*  session's video.h264, rotating to a new segment before 4 GiB. The AA callback
 +*  only queues a copy; a writer thread does the file I/O. Codec config (SPS/PPS)
-+*  is cached separately and written once at the head of each segment.
++*  is cached separately and written at the head of each segment, or appended at
++*  the current offset when the phone sends it after the first access unit. When
++*  the queue overflows, the writer skips deltas until the next IDR instead of
++*  writing frames that reference a lost one.
 +*/
 +
 +#pragma once
 +
++#include <atomic>
 +#include <cstdint>
 +#include <fstream>
 +#include <memory>
@@ -348,14 +352,21 @@ index 0000000..9a9d06f
 +    // Runs on the writer thread only.
 +    void writeChunk(const std::vector<uint8_t>& chunk);
 +    void rotate();
++    // Writer thread: copy the cached SPS/PPS into the file at the current
++    // offset. Returns false when no codec config has been seen yet.
++    bool writeCachedCodecConfig();
 +
 +    std::shared_ptr<AurigaSessionManager> session_;
 +    std::string path_;
 +    std::ofstream file_;
 +    std::vector<uint8_t> codecConfig_;
 +    std::mutex codecConfigMutex_;
++    std::atomic<bool> codecConfigPending_;
 +    uint64_t segmentBytes_;
 +    bool segmentStarted_;
++    bool codecConfigWritten_;
++    bool awaitingKeyframe_;
++    bool warnedMissingConfig_;
 +    bool accepting_;
 +    // Declared last: its destructor joins the writer thread before the file and
 +    // the codec-config buffer are destroyed.
@@ -368,10 +379,10 @@ index 0000000..9a9d06f
 +}
 diff --git a/include/f1x/openauto/autoapp/Projection/AurigaWriter.hpp b/include/f1x/openauto/autoapp/Projection/AurigaWriter.hpp
 new file mode 100644
-index 0000000..eeb6aa8
+index 0000000..66b4fd5
 --- /dev/null
 +++ b/include/f1x/openauto/autoapp/Projection/AurigaWriter.hpp
-@@ -0,0 +1,220 @@
+@@ -0,0 +1,234 @@
 +/*
 +*  This file is part of openauto project.
 +*
@@ -423,6 +434,7 @@ index 0000000..eeb6aa8
 +        , sink_(std::move(sink))
 +        , queuedBytes_(0)
 +        , dropped_(0)
++        , gap_(false)
 +        , stopping_(false)
 +    {
 +    }
@@ -511,6 +523,17 @@ index 0000000..eeb6aa8
 +        return dropped_;
 +    }
 +
++    // True when a chunk was dropped since the last call. A sink that writes a
++    // reference-based stream uses this to resynchronise (video: skip deltas and
++    // restart at the next IDR) instead of writing frames with a lost reference.
++    bool take_drop_flag()
++    {
++        std::lock_guard<std::mutex> lock(mutex_);
++        const bool dropped = gap_;
++        gap_ = false;
++        return dropped;
++    }
++
 +    const std::string& stream() const
 +    {
 +        return stream_;
@@ -569,6 +592,7 @@ index 0000000..eeb6aa8
 +    void countDropLocked()
 +    {
 +        ++dropped_;
++        gap_ = true;
 +        if (dropped_ == 1 || dropped_ % 100 == 0)
 +        {
 +            OPENAUTO_LOG(warning) << "[AurigaWriter] " << stream_ << " queue full, dropped "
@@ -584,6 +608,7 @@ index 0000000..eeb6aa8
 +    std::deque<std::vector<uint8_t>> queue_;
 +    uint64_t queuedBytes_;
 +    uint64_t dropped_;
++    bool gap_;
 +    bool stopping_;
 +    std::thread thread_;
 +};
@@ -1037,10 +1062,10 @@ index 0000000..6d11b1d
 +}
 diff --git a/src/autoapp/Projection/AurigaInputDevice.cpp b/src/autoapp/Projection/AurigaInputDevice.cpp
 new file mode 100644
-index 0000000..ca9fcef
+index 0000000..db53245
 --- /dev/null
 +++ b/src/autoapp/Projection/AurigaInputDevice.cpp
-@@ -0,0 +1,236 @@
+@@ -0,0 +1,273 @@
 +/*
 +*  This file is part of openauto project.
 +*
@@ -1069,6 +1094,14 @@ index 0000000..ca9fcef
 +namespace projection
 +{
 +
++namespace
++{
++
++// A line is `tap|down|move|up X Y`; anything longer is a runaway writer.
++constexpr size_t MAX_PENDING = 64 * 1024;
++
++}
++
 +AurigaInputDevice::AurigaInputDevice(std::string jsonlPath, QRect touchscreenGeometry)
 +    : jsonlPath_(std::move(jsonlPath))
 +    , touchscreenGeometry_(std::move(touchscreenGeometry))
@@ -1084,13 +1117,29 @@ index 0000000..ca9fcef
 +
 +void AurigaInputDevice::start(IInputDeviceEventHandler& eventHandler)
 +{
++    // `quit` (or stdin EOF) ends the reader loop without `stop()`. A second
++    // KeyBindingRequest must not assign over a joinable thread (std::terminate)
++    // or reopen a stream that is already open (failbit, silent log loss).
++    running_ = false;
++    if (reader_.joinable())
++    {
++        reader_.join();
++    }
++
 +    if (running_.exchange(true))
 +    {
 +        return;
 +    }
 +
-+    eventHandler_ = &eventHandler;
-+    log_.open(jsonlPath_, std::ios::out | std::ios::trunc);
++    {
++        std::lock_guard<std::mutex> lock(mutex_);
++        eventHandler_ = &eventHandler;
++    }
++
++    if (!log_.is_open())
++    {
++        log_.open(jsonlPath_, std::ios::out | std::ios::trunc);
++    }
 +    if (!log_.is_open())
 +    {
 +        OPENAUTO_LOG(warning) << "[AurigaInputDevice] cannot open " << jsonlPath_;
@@ -1185,6 +1234,13 @@ index 0000000..ca9fcef
 +        }
 +
 +        pending_.append(buffer, static_cast<size_t>(count));
++        if (pending_.size() > MAX_PENDING)
++        {
++            // A writer that never sends a newline must not grow this forever.
++            OPENAUTO_LOG(warning) << "[AurigaInputDevice] discarding " << pending_.size()
++                                  << " bytes without a newline";
++            pending_.clear();
++        }
 +
 +        size_t newline;
 +        while ((newline = pending_.find('\n')) != std::string::npos)
@@ -1243,7 +1299,13 @@ index 0000000..ca9fcef
 +void AurigaInputDevice::sendTouch(
 +    aap_protobuf::service::inputsource::message::PointerAction action, uint32_t x, uint32_t y)
 +{
-+    if (eventHandler_ == nullptr)
++    IInputDeviceEventHandler* handler = nullptr;
++    {
++        std::lock_guard<std::mutex> lock(mutex_);
++        handler = eventHandler_;
++    }
++
++    if (handler == nullptr)
 +    {
 +        OPENAUTO_LOG(warning) << "[AurigaInputDevice] touch ignored, handler not ready";
 +        return;
@@ -1253,7 +1315,7 @@ index 0000000..ca9fcef
 +    event.type = action;
 +    event.actionIndex = 0;
 +    event.pointers.push_back({x, y, 0});
-+    eventHandler_->onTouchEvent(event);
++    handler->onTouchEvent(event);
 +}
 +
 +void AurigaInputDevice::logEvent(const std::string& command, uint32_t x, uint32_t y)
@@ -1570,10 +1632,10 @@ index 0000000..ba0db47
 +}
 diff --git a/src/autoapp/Projection/AurigaVideoOutput.cpp b/src/autoapp/Projection/AurigaVideoOutput.cpp
 new file mode 100644
-index 0000000..453c81f
+index 0000000..117204e
 --- /dev/null
 +++ b/src/autoapp/Projection/AurigaVideoOutput.cpp
-@@ -0,0 +1,166 @@
+@@ -0,0 +1,253 @@
 +/*
 +*  This file is part of openauto project.
 +*
@@ -1600,8 +1662,12 @@ index 0000000..453c81f
 +    : VideoOutput(std::move(configuration))
 +    , session_(std::move(session))
 +    , path_(session_->path("video.h264"))
++    , codecConfigPending_(false)
 +    , segmentBytes_(0)
 +    , segmentStarted_(false)
++    , codecConfigWritten_(false)
++    , awaitingKeyframe_(false)
++    , warnedMissingConfig_(false)
 +    , accepting_(false)
 +    , writer_("video", [this](const std::vector<uint8_t>& chunk) { this->writeChunk(chunk); })
 +{
@@ -1629,6 +1695,9 @@ index 0000000..453c81f
 +
 +    segmentBytes_ = 0;
 +    segmentStarted_ = false;
++    codecConfigWritten_ = false;
++    awaitingKeyframe_ = false;
++    warnedMissingConfig_ = false;
 +    accepting_ = true;
 +    writer_.start();
 +
@@ -1655,7 +1724,9 @@ index 0000000..453c81f
 +}
 +
 +// MEDIA_MESSAGE_CODEC_CONFIG. Cached, never mixed into the media bytes; it is
-+// written once at the head of the current or next segment.
++// written once at the head of the current or next segment. When the phone sends
++// it after the first access unit (config ordering is not guaranteed), the writer
++// thread appends it at the current offset instead of losing it for the segment.
 +void AurigaVideoOutput::setCodecConfig(const aasdk::common::DataConstBuffer& buffer)
 +{
 +    if (buffer.cdata == nullptr || buffer.size == 0)
@@ -1665,6 +1736,7 @@ index 0000000..453c81f
 +
 +    std::lock_guard<std::mutex> lock(codecConfigMutex_);
 +    codecConfig_.assign(buffer.cdata, buffer.cdata + buffer.size);
++    codecConfigPending_ = true;
 +
 +    OPENAUTO_LOG(info) << "[AurigaVideoOutput] codec config " << codecConfig_.size()
 +                       << " bytes (written at the head of the segment)";
@@ -1684,8 +1756,31 @@ index 0000000..453c81f
 +    }
 +}
 +
++namespace
++{
++
++// True when the access unit carries an IDR slice (NAL type 5), i.e. a point a
++// decoder can restart from.
++bool containsIdr(const std::vector<uint8_t>& data)
++{
++    for (size_t i = 0; i + 3 < data.size(); ++i)
++    {
++        if (data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 1 && (data[i + 3] & 0x1F) == 5)
++        {
++            return true;
++        }
++    }
++    return false;
++}
++
++}
++
 +// Writer thread. Codec config goes in front of the first access unit of a
-+// segment, so every segment starts with SPS/PPS.
++// segment, so every segment starts with SPS/PPS. A queue overflow means a chunk
++// was lost; deltas that follow it reference a missing frame, so they are skipped
++// until the next IDR, which is prefixed with SPS/PPS again. Dropping beats
++// writing an undecodable reference chain, and the stream server sees the IDR as
++// the resync point (`AurigaWriter::take_drop_flag`).
 +void AurigaVideoOutput::writeChunk(const std::vector<uint8_t>& chunk)
 +{
 +    if (!file_.is_open())
@@ -1693,16 +1788,46 @@ index 0000000..453c81f
 +        return;
 +    }
 +
++    if (writer_.take_drop_flag())
++    {
++        if (!awaitingKeyframe_)
++        {
++            OPENAUTO_LOG(warning) << "[AurigaVideoOutput] queue overflow, skipping deltas "
++                                     "until the next IDR";
++        }
++        awaitingKeyframe_ = true;
++    }
++
++    if (awaitingKeyframe_)
++    {
++        if (!containsIdr(chunk))
++        {
++            return;
++        }
++        awaitingKeyframe_ = false;
++        // Restart the segment head so the IDR is preceded by SPS/PPS.
++        segmentStarted_ = false;
++        codecConfigWritten_ = false;
++    }
++
 +    if (!segmentStarted_)
 +    {
 +        segmentStarted_ = true;
-+
-+        std::lock_guard<std::mutex> lock(codecConfigMutex_);
-+        if (!codecConfig_.empty())
++        this->writeCachedCodecConfig();
++        if (!codecConfigWritten_ && !warnedMissingConfig_)
 +        {
-+            file_.write(reinterpret_cast<const char*>(codecConfig_.data()),
-+                        static_cast<std::streamsize>(codecConfig_.size()));
-+            segmentBytes_ += codecConfig_.size();
++            warnedMissingConfig_ = true;
++            OPENAUTO_LOG(warning) << "[AurigaVideoOutput] media before codec config; "
++                                     "the segment head has no SPS/PPS yet";
++        }
++    }
++    else if (codecConfigPending_)
++    {
++        const uint64_t offset = segmentBytes_;
++        if (this->writeCachedCodecConfig())
++        {
++            OPENAUTO_LOG(warning) << "[AurigaVideoOutput] codec config arrived after the "
++                                     "first access unit; appended at offset " << offset;
 +        }
 +    }
 +
@@ -1717,6 +1842,28 @@ index 0000000..453c81f
 +    }
 +}
 +
++bool AurigaVideoOutput::writeCachedCodecConfig()
++{
++    std::vector<uint8_t> config;
++    {
++        std::lock_guard<std::mutex> lock(codecConfigMutex_);
++        config = codecConfig_;
++        codecConfigPending_ = false;
++    }
++
++    if (config.empty())
++    {
++        return false;
++    }
++
++    file_.write(reinterpret_cast<const char*>(config.data()),
++                static_cast<std::streamsize>(config.size()));
++    file_.flush();
++    segmentBytes_ += config.size();
++    codecConfigWritten_ = true;
++    return true;
++}
++
 +// Segment rollover: the same file restarts at offset 0 and the manifest count
 +// advances, which is the stream server's signal to reopen it. Writer thread.
 +void AurigaVideoOutput::rotate()
@@ -1726,6 +1873,8 @@ index 0000000..453c81f
 +    file_.open(path_, std::ios::binary | std::ios::trunc);
 +    segmentBytes_ = 0;
 +    segmentStarted_ = false;
++    codecConfigWritten_ = false;
++    awaitingKeyframe_ = false;
 +
 +    if (!file_.is_open())
 +    {
