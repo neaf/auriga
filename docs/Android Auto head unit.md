@@ -400,15 +400,23 @@ aasdk's CMake). aasdk never inspects or logs the peer certificate.
 
 ## Runtime
 
-`scripts/auriga.sh {start|stop|status}` is the only runtime entry point.
-`openauto-config/run.sh` only execs `autoapp` with the environment it is handed.
+`scripts/auriga.sh {start|restart|stop|status|open|tap}` is the only runtime
+entry point. `openauto-config/run.sh` only execs `autoapp` with the environment
+it is handed.
 
 | Verb | Effect |
 | --- | --- |
 | `start` | creates the FIFO and its writer (reaping stale writers first), starts `autoapp` (offscreen capture), starts the stream server with the configured ports, polls the HTTP and WS listeners, waits up to `AURIGA_SESSION_TIMEOUT` for the first AA session, starts `caffeinate`, writes the lock, opens the browser |
-| `status` | pids of `autoapp` and the stream server, both listening ports, the `current` session; exits non-zero unless both run |
+| `restart` | `stop` then `start`; the clean path after a stale pair or a dongle replug |
+| `status` | pids of `autoapp` and the stream server, both listening ports, the dongle/phone USB IDs, the `current` session; exits non-zero unless both processes run |
 | `stop` | SIGTERM to the pids in the lock (cmdline-checked), waits, SIGKILLs, `pkill` for `autoapp`/stream/FIFO-writer orphans, removes the FIFO and the lock |
+| `open` | opens the browser at the HTTP UI when the stream server is listening; does not restart anything |
+| `tap X Y` | writes one `tap X Y` to `AURIGA_INPUT_FIFO` in 1280x720 space; refuses when the FIFO or `autoapp` is missing |
 
+- `status` also reads the USB product IDs from `ioreg`: dongle `2717:ff40`
+  before the AOA switch, `18d1:2d00` while projecting, phone `04e8:6860`. A
+  live pair with the dongle back at `2717:ff40` is not projecting; `restart`
+  is the first recovery step.
 - The lock is `<capture-dir>/.auriga.lock`, one `role pid` line per component.
   `start` refuses while a live pid is in it, and refuses a running `autoapp` of
   the same build. The exclusive scope is the host, not one capture directory:

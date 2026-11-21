@@ -29,6 +29,9 @@
 # Runtime logs
 /logs/*.log
 
+# Locally built APKs (AARE fork)
+/artifacts/
+
 # Re-architect run state
 /.rearch/
 
@@ -41,6 +44,9 @@ __pycache__/
 
 # macOS
 .DS_Store
+
+# Local Android Auto phone identity (private key; never commit)
+/daxter-certs/
 
 # Dongle credential databases (link keys; kept locally only)
 /dongle-backup/*.db

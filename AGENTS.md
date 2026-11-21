@@ -8,10 +8,11 @@ video/audio/input, and feed a live project from the stream.
 You do **not** need to build or modify OpenAuto/aasdk to use it. For changing
 the head-unit package itself, see [`docs/Build.md`](docs/Build.md).
 
-## Quick start (macOS, dongle direct)
+## Quick start (macOS, dongle direct or through a powered dock)
 
 Prerequisites: dongle in MTP (`2717:ff40`), phone BT + Wi-Fi on and associated
-with `AutoLink-A512`, Brave installed.
+with `AutoLink-A512`, Brave installed. A powered Thunderbolt/USB dock (for
+example a CalDigit) works; the dongle enumerates with the same IDs.
 
 ```bash
 ./scripts/auriga.sh start
@@ -21,10 +22,17 @@ with `AutoLink-A512`, Brave installed.
 
 `start` brings up `autoapp` (offscreen capture), the local stream server,
 `caffeinate`, waits for `127.0.0.1:8080`, then opens Brave. `status` reports the
-pids, both ports and the current session. A second `start` refuses instead of
-starting a duplicate: the lock file in the capture dir names the running pair and
-a host-wide `pgrep` catches a pair whose lock is gone, so the scope is the host,
-not one capture directory.
+pids, both ports, the dongle/phone USB IDs and the current session. A second
+`start` refuses instead of starting a duplicate: the lock file in the capture
+dir names the running pair and a host-wide `pgrep` catches a pair whose lock is
+gone, so the scope is the host, not one capture directory. When a pair from an
+earlier day is still alive, or the dongle was replugged, replace it in one step:
+
+```bash
+./scripts/auriga.sh restart
+./scripts/auriga.sh open         # reopen the Brave UI
+./scripts/auriga.sh tap 640 360  # one tap in 1280x720 space
+```
 
 Then open `http://localhost:8080` in Brave. The page auto-connects to
 `ws://127.0.0.1:8081`; audio starts muted, click the small 🔇 button to enable
@@ -38,6 +46,26 @@ prompt.
 The Galaxy S25 can stay on the Mac's USB for `adb` while AA runs. The script
 only AOA-switches the dongle; the phone should remain in MTP+ADB
 (`04e8:6860`). See USB invariants below.
+
+## Running a different app
+
+The rig is app-agnostic: `autoapp` projects whatever Android Auto session the
+phone opens, so there is no per-app switch in `auriga.sh`. To switch apps, tap
+the app-grid icon at the bottom-right of the Brave canvas and choose the app;
+`auriga.sh tap X Y` does the same tap from a shell (the grid is around
+`1236 683` on the 1280x720 canvas).
+
+Check that Android Auto can see the app before blaming the rig:
+
+```bash
+adb -s RFGL329J04J shell cmd package query-services -a androidx.car.app.CarAppService
+adb -s RFGL329J04J shell dumpsys package <package> | grep -E "versionName|installerPackageName"
+```
+
+Navigation/template apps on Android Auto 17.x also need a Play install record
+(`installerPackageName=com.android.vending`); a sideloaded debug APK is filtered
+out of the launcher. That is an AA policy, not an Auriga limitation. See the
+app's own `docs/ANDROID-AUTO-LAUNCHER.md` for Mevia.
 
 ## What the package provides
 

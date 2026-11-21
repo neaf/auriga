@@ -1,0 +1,25 @@
+diff --git a/aap/src/main/kotlin/net/prototux/aare/aap/PinStore.kt b/aap/src/main/kotlin/net/prototux/aare/aap/PinStore.kt
+index f8d7bca..e8a1fe0 100644
+--- a/aap/src/main/kotlin/net/prototux/aare/aap/PinStore.kt
++++ b/aap/src/main/kotlin/net/prototux/aare/aap/PinStore.kt
+@@ -68,7 +68,9 @@ internal class PinningTrustManager(
+                 val trusted = pins.get(peerKey)
+                 when {
+                     actual in trusted -> Unit
+-                    trustOnFirstUse && trusted.isEmpty() -> pending = actual
++                    // Auriga fork: a head unit reached over a Bluetooth bond may rotate its
++                    // certificate (the A512 presents one of two). Accept the new one and pin it.
++                    trustOnFirstUse -> pending = actual
+                     else -> {
+                         refusal = PinRefusal(peerKey, actual, changed = trusted.isNotEmpty())
+                         throw CertificateException("head unit certificate for $peerKey not trusted (SHA-256 $actual)")
+@@ -84,7 +86,8 @@ internal class PinningTrustManager(
+     /** Trusts the certificate seen during the handshake, if the head unit had none trusted yet. */
+     fun commit() {
+         synchronized(pins) {
+-            if (pins.get(peerKey).isEmpty()) pending?.let { pins.add(peerKey, it) }
++            val p = pending ?: return
++            if (p !in pins.get(peerKey)) pins.add(peerKey, p)
+         }
+     }
+ 

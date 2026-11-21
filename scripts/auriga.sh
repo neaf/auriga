@@ -273,6 +273,42 @@ cmd_start() {
   release_guard
 }
 
+# Print the VID:PID of one USB product, or nothing when it is not attached.
+# `ioreg -r` prints one device per record; nested hub children carry a "|"
+# prefix and are ignored because only top-level "+-o" lines start a record.
+usb_id() {
+  ioreg -p IOUSB -l -w 0 -r -c IOUSBHostDevice 2>/dev/null | awk -v want="$1" '
+    /^\+-o / {
+      if (name == want && vid != "" && pid != "") {
+        printf "%04x:%04x\n", vid, pid
+        found = 1
+        exit
+      }
+      name = ""; vid = ""; pid = ""; next
+    }
+    /^ +"USB Product Name" = / { name = $0; sub(/.*= /, "", name); gsub(/"/, "", name); next }
+    /^ +"idVendor" = / { vid = $3 + 0; next }
+    /^ +"idProduct" = / { pid = $3 + 0; next }
+    END {
+      if (!found && name == want && vid != "" && pid != "")
+        printf "%04x:%04x\n", vid, pid
+    }
+  '
+}
+
+usb_state() {
+  dongle=$(usb_id AutoLink)
+  phone=$(usb_id SAMSUNG_Android)
+  case "$dongle" in
+    2717:ff40) dongle="$dongle (MTP, waiting for the AOA switch)" ;;
+    18d1:2d00) dongle="$dongle (AOA, projecting)" ;;
+    "") dongle="not found" ;;
+    *) dongle="$dongle (unexpected ID)" ;;
+  esac
+  echo "usb dongle:  $dongle"
+  echo "usb phone:   ${phone:-not found}"
+}
+
 # Signal one component. The cmdline check keeps a recycled pid from being killed.
 stop_pid() {
   pid=${1:-}
@@ -314,6 +350,30 @@ cmd_stop() {
   say "head unit stopped"
 }
 
+cmd_restart() {
+  cmd_stop
+  cmd_start
+}
+
+cmd_open() {
+  if ! port_open "$HTTP_PORT"; then
+    die "the stream server is not listening on 127.0.0.1:$HTTP_PORT; run '$(basename "$0") start' first"
+  fi
+  open_browser
+}
+
+cmd_tap() {
+  [ "$#" -eq 2 ] || die "usage: $(basename "$0") tap X Y (coordinates in 1280x720 space)"
+  [ -n "$1" ] && [ -n "$2" ] || die "tap coordinates must be non-negative integers"
+  case "$1$2" in
+    *[!0-9]*) die "tap coordinates must be non-negative integers" ;;
+  esac
+  [ -p "$FIFO" ] || die "input FIFO $FIFO is missing; run '$(basename "$0") start'"
+  [ -n "$(find_autoapp)" ] || die "autoapp is not running; run '$(basename "$0") start'"
+  printf 'tap %s %s\n' "$1" "$2" >"$FIFO"
+  say "tap $1 $2"
+}
+
 cmd_status() {
   ok=1
   echo "capture dir: $CAPTURE_DIR"
@@ -327,6 +387,7 @@ cmd_status() {
 
   if port_open "$HTTP_PORT"; then echo "http:        127.0.0.1:$HTTP_PORT listening"; else echo "http:        127.0.0.1:$HTTP_PORT closed"; ok=0; fi
   if port_open "$WS_PORT"; then echo "ws:          127.0.0.1:$WS_PORT listening"; else echo "ws:          127.0.0.1:$WS_PORT closed"; ok=0; fi
+  usb_state
 
   if [ -e "$CAPTURE_DIR/current" ]; then
     echo "session:     $(readlink "$CAPTURE_DIR/current" 2>/dev/null || echo current)"
@@ -341,10 +402,13 @@ cmd_status() {
 
 case "${1:-}" in
   start) cmd_start ;;
+  restart) cmd_restart ;;
   stop) cmd_stop ;;
   status) cmd_status ;;
+  open) cmd_open ;;
+  tap) shift; cmd_tap "$@" ;;
   *)
-    echo "usage: $(basename "$0") {start|stop|status}" >&2
+    echo "usage: $(basename "$0") {start|restart|stop|status|open|tap X Y}" >&2
     exit 2
     ;;
 esac

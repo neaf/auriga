@@ -115,8 +115,9 @@ session change from `size < offset`.
   `{"type":"keyframe"}` request. HTTP/WS bind `127.0.0.1` only.
 - **Env.** `AURIGA_CAPTURE_DIR` (opt-in capture mode, read once), `AURIGA_INPUT_FIFO`,
   `AURIGA_DIR`, `AURIGA_PYTHON`. `QT_QPA_PLATFORM=offscreen`.
-- **Start/stop.** `scripts/auriga.sh {start|stop|status}`. One instance per
-  capture dir, enforced by a lock file + pid check, not `pgrep` heuristics.
+- **Start/stop.** `scripts/auriga.sh {start|restart|stop|status|open|tap}`. One
+  instance per capture dir, enforced by a lock file + pid check, not `pgrep`
+  heuristics; `status` also reports the dongle/phone USB IDs.
 
 ## Error handling
 

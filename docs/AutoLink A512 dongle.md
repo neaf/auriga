@@ -116,6 +116,11 @@ cd /tmp/restore && sudo mtp-sendfile videoInfo videoInfo
 sudo mtp-getfile <file-id> /tmp/check && sudo cmp /tmp/restore/videoInfo /tmp/check
 ```
 
+Delete by name (`-f`), never by id (`-n`): ids are reassigned between a listing
+and the next open, and a delete by id has already removed the wrong file once
+(it took `ly_linktype_aa` instead of `btapp.bk`, which left the dongle booting
+in CarPlay mode until the next Android pairing recreated it).
+
 Restore only `videoInfo.orig` or `videoInfo.car-trip`; the `videoInfo.galaxy`
 snapshots are invalid. The current Bluetooth pairing DB is
 `dongle-backup/btapp.db.galaxy-fresh` (33 B); the 207-byte DBs hold stale link
@@ -214,12 +219,30 @@ Location: host side `openauto/src/autoapp/App.cpp:175-186`.
 
 Symptom: the dongle never appears as `2717:ff40`; `autoapp` waits forever and
 nothing logs the mode.
-Cause: the dongle latches to `05ac:12a8` when an iPhone is on the air; the
-source filter matches only `2717:ff40` and `isAOAPDevice` matches only `18d1`,
-so `handleDevice` returns without logging (`USBHub.cpp:100-125`).
-Workaround: replug with the iPhone off. No software path recovers it.
+Cause: the dongle presents `05ac:12a8` when it boots in CarPlay mode — when an
+iPhone is on the air, or when `ly_linktype_aa` is missing. The source filter
+matches only `2717:ff40` and `isAOAPDevice` matches only `18d1`, so
+`handleDevice` returns without logging (`USBHub.cpp:100-125`).
+Recovery: pair an **Android phone** with the dongle. It flips to AA, recreates
+`ly_linktype_aa` (`0x01`) and `btapp.db`, and re-enumerates as `2717:ff40`
+(observed 2026-10-29, after `ly_linktype_aa` had been deleted by mistake).
+Replugging with the iPhone off also works when the latch came from an iPhone.
 Location: `patches/aasdk-usb-filter.patch`, `USBHub.cpp:89-98`.
-Whether the latch is reachable without an iPhone is `unverified`.
+
+While the dongle is in CarPlay mode macOS binds its PTP interface
+(`ptpcamerad`), so libmtp cannot reach the storage and `ly_linktype_aa` cannot
+be written back by hand; the Android pairing is the way out.
+
+### AOA switch from macOS
+
+`autoapp` runs as the user and cannot send the AOA control requests, so a dongle
+sitting at `2717:ff40` stays there and `autoapp` logs `Waiting for device...`.
+Switch it with root, then restart the rig so `autoapp` claims `18d1:2d00`:
+
+```bash
+sudo .venv/bin/python tools/aoa_probe.py start
+./scripts/auriga.sh stop && ./scripts/auriga.sh start
+```
 
 ### Idle re-enumeration
 

@@ -21,7 +21,14 @@ associated with `AutoLink-A512`, Brave installed. Python dependencies live in
 
 `start` brings up `autoapp` (offscreen capture), the stream server, and
 `caffeinate`, waits for `127.0.0.1:8080`, then opens Brave. A second `start`
-refuses to duplicate a running pair.
+refuses to duplicate a running pair; `restart` replaces a stale pair, `open`
+reopens the browser and `tap X Y` sends one tap in 1280x720 space.
+
+```bash
+./scripts/auriga.sh restart
+./scripts/auriga.sh open
+./scripts/auriga.sh tap 640 360
+```
 
 Open `http://localhost:8080`, then click the small 🔇 button to enable audio.
 Tap or drag the canvas to drive the phone; drag sends `down`/`move`/`up`.
@@ -29,6 +36,15 @@ Tap or drag the canvas to drive the phone; drag sends `down`/`move`/`up`.
 On the first connect after a cold boot, accept the phone's `Enable after unlock`
 prompt. If it times out, the dongle resets and `autoapp` reconnects; enable
 `Start Android Auto while locked` on the phone to avoid the prompt.
+
+## Running a different app
+
+The rig projects whatever Android Auto session the phone opens; it has no
+per-app switch. Tap the app-grid icon at the bottom-right of the Brave canvas
+and choose the app (or use `./scripts/auriga.sh tap 1236 683`). Navigation and
+template apps on Android Auto 17.x must be installed from Play; a sideloaded
+debug APK is filtered out of the launcher by Android Auto itself, not by
+Auriga. `AGENTS.md#running-a-different-app` has the app-visibility checks.
 
 ## What works
 
