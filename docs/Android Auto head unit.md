@@ -453,7 +453,7 @@ cmake --build build-openauto-mac --target autoapp -j8
 ./scripts/auriga.sh start
 ./scripts/auriga.sh status
 pgrep -fl "autoapp|auriga_stream"
-adb -s RFGL329J04J shell svc usb getFunctions          # expect: mtp
+adb -s <PHONE_SERIAL> shell svc usb getFunctions          # expect: mtp
 ioreg -p IOUSB -l -w 0 | grep -E 'o (AutoLink|SAMSUNG_Android)@|"idProduct" = (26720|11520|11521|65344)'
 tail -20 "$(ls -t logs/openauto-mac-*.log | head -1)"  # Version Received + pings
 ffmpeg -loglevel info -i captures-mac/current/video.h264 -f null - 2>&1 | tail -1

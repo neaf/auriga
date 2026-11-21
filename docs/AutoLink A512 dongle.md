@@ -81,24 +81,24 @@ include path to `aap_protobuf` (`docs/Build.md#aasdk`).
 Flat files with dynamic MTP IDs; `btapp.bk` and `800x480-A512.h264` are absent on
 the dongle today, so six of the eight slots are populated.
 
-| File | Size | Current value | Backup |
-| --- | ---: | --- | --- |
-| `videoInfo` | 364 B | video config + phone address + head-unit name + session tag | `dongle-backup/videoInfo.orig`, `videoInfo.car-trip`; `videoInfo.galaxy` is invalid |
-| `btapp.db` | 207 B or 33 B | Bluetooth link keys | `dongle-backup/btapp.db.galaxy-fresh` (33 B) |
-| `btapp.bk` | absent | backup DB, not recreated | none |
-| `ly_linktype_aa` | 1 B | `0x01` = AA mode | tracked |
-| `bt.mac` | 12 B | `EDA2A4944FB8` | `dongle-backup/bt.mac.txt` |
-| `ly-AutoLink-A512` | 8 B | name cache `OPPO A72`, no NUL | tracked |
+| File | Size | Current value |
+| --- | ---: | --- |
+| `videoInfo` | 364 B | video config + phone address + head-unit name + session tag |
+| `btapp.db` | 207 B or 33 B | Bluetooth link keys |
+| `btapp.bk` | absent | backup DB, not recreated |
+| `ly_linktype_aa` | 1 B | `0x01` = AA mode |
+| `bt.mac` | 12 B | 12 ASCII hex chars, no separators |
+| `ly-AutoLink-A512` | 8 B | name cache, e.g. phone model, no NUL |
 | `carplay.key` | 1433 B | CarPlay key | none; do not delete |
 | `800x480-A512.h264` | 34,134 B | AA splash | missing, cannot be restored exactly |
 
 Config writes are manual MTP operations only (`mtp-files`, `mtp-getfile`,
 `mtp-delfile`, `mtp-sendfile`); no code writes them. `mtp-sendfile` uses the
 local basename as the remote name, so stage files under the exact remote name.
-Delete or upload one file at a time and re-list the slots afterwards. Sizes for
-the on-dongle files are the ones in the table above (measured from the backups;
-`mtp-files` lists the live slots); `carplay.key` (1433 B) and
-`800x480-A512.h264` (34,134 B) are `unverified`, because neither is in the repo.
+Delete or upload one file at a time and re-list the slots afterwards. Back up
+each slot with `mtp-getfile` before touching it; there are no backup snapshots
+in this repo. `carplay.key` (1433 B) and `800x480-A512.h264` (34,134 B) are
+`unverified`, because neither has been captured for inspection.
 
 ### MTP procedure
 
@@ -108,7 +108,7 @@ sudo mtp-files
 
 # replace one file: stage it under the exact remote name first
 mkdir -p /tmp/restore
-cp dongle-backup/videoInfo.orig /tmp/restore/videoInfo
+cp /path/to/your/videoInfo-backup /tmp/restore/videoInfo
 sudo mtp-delfile -f videoInfo
 cd /tmp/restore && sudo mtp-sendfile videoInfo videoInfo
 
@@ -121,15 +121,14 @@ and the next open, and a delete by id has already removed the wrong file once
 (it took `ly_linktype_aa` instead of `btapp.bk`, which left the dongle booting
 in CarPlay mode until the next Android pairing recreated it).
 
-Restore only `videoInfo.orig` or `videoInfo.car-trip`; the `videoInfo.galaxy`
-snapshots are invalid. The current Bluetooth pairing DB is
-`dongle-backup/btapp.db.galaxy-fresh` (33 B); the 207-byte DBs hold stale link
-keys.
+Restore only a `videoInfo` backup known to be valid; see the byte checks under
+`## Validation gap` below before uploading one.
 
 ### `videoInfo` layout
 
-364 bytes, little-endian, verified by byte inspection of the snapshots in
-`dongle-backup/`.
+364 bytes, little-endian, verified by byte inspection of three dumped
+`videoInfo` files: a bench config (`orig`), a real car head unit's config
+(`car-trip`), and an invalid dump (`galaxy`).
 
 | Offset | Type | Value | Meaning |
 | ---: | --- | --- | --- |
@@ -143,7 +142,7 @@ keys.
 | `0x27` | 4 bytes | `00 00 00 01`; absent in `galaxy` | Annex-B start code |
 | `0x2b` | 4 bytes | `68 ce 06 e2` (`car-trip`: `68 ce 06 f2`) | PPS |
 | `0x50` | u32 | 2 (`orig`, `car-trip`), 4 (`galaxy`) | unknown, `unverified` |
-| `0x54` | 17 ASCII + NUL | e.g. `5C:D3:3D:56:71:F4` | phone Bluetooth address, uppercase colon form |
+| `0x54` | 17 ASCII + NUL | e.g. `00:11:22:33:44:55` | phone Bluetooth address, uppercase colon form |
 | `0x68` | 10 bytes | `auriga-pi\0`, `T  M918500` | head-unit name, fixed width, no NUL when full |
 | `0x72` | 8 bytes | `1493 _0\0`; zero in `galaxy` | session tag |
 | `0x168` | u32 | `4e2d347c` (`orig`), `5e205bfd` (`car-trip`), `576e7e45` (`galaxy`) | unknown, `unverified` |
@@ -153,24 +152,9 @@ keys.
 `0x0c` field, the 10-byte head-unit name (`0x68..0x71`) and the u32 at `0x168`.
 It records a real car head unit (`T  M918500`), not the bench config.
 
-### Backup inventory
-
-| File | Size | Status |
-| --- | ---: | --- |
-| `dongle-backup/videoInfo.orig` | 364 B | valid bench config: OPPO address, `auriga-pi`, Baseline 3.2 SPS/PPS |
-| `dongle-backup/videoInfo.car-trip` | 364 B | valid car-trip snapshot |
-| `dongle-backup/videoInfo.galaxy` | 364 B | invalid: `0x04` and `0x08` are 0, `0x12..0x4f` are 0 (no start codes, no SPS, no PPS), `0x72..0x79` are 0. Do not restore |
-| `dongle-backup/videoInfo.galaxy.active` | 364 B | byte-identical to `videoInfo.galaxy`, so also invalid |
-| `dongle-backup/btapp.db.galaxy-fresh` | 33 B | current pairing DB; sha256 `f6b4b7e6…`; current but `unverified` |
-| `dongle-backup/btapp.db.orig`, `btapp.bk.orig` | 207 B | original Galaxy + OPPO records; sha256 `4023b49d…`; stale |
-| `dongle-backup/btapp.db.galaxy`, `btapp.bk.galaxy` | 207 B | duplicate-Galaxy DB; sha256 `d021cf83…`; link keys do not match the current pairing |
-| `dongle-backup/bt.mac.txt` | 13 B | `EDA2A4944FB8` plus newline |
-| `dongle-backup/ly_linktype_aa` | 1 B | `0x01` |
-| `dongle-backup/ly-AutoLink-A512.orig` | 8 B | `OPPO A72`, no NUL |
-
-The `*.db`/`*.bk` files are gitignored and untracked, so a fresh clone has no
-pairing DB. `btapp.db.galaxy-fresh` is the only backup of the current link key;
-a later re-pair silently invalidates it and nothing detects that.
+A `*.db`/`*.bk` pairing DB is gitignored and untracked, so a fresh clone has
+none; back one up with `mtp-getfile` before deleting it, since a later re-pair
+silently invalidates the old one and nothing detects that.
 
 ### `btapp.db` layout
 
@@ -179,10 +163,9 @@ a later re-pair silently invalidates it and nothing detects that.
 | two records | 207 | 8-byte prefix `02 01` + 6-byte address stored reversed; seven `13 00 01 04` + 16-byte link-key blocks starting every 29 bytes (`0x08, 0x25, 0x42, 0x5f, 0x7c, 0x99, 0xb6`); trailer `00 42 54 4c f3` |
 | one record | 33 | 8-byte prefix; one `13 00 01 04` + 16-byte link key; trailer `00 42 54 0a 53` |
 
-`btapp.db.orig` holds two records: `02 01` at `0x00` and `0x3a`; the Galaxy
-address `f4 71 56 3d d3 5c` (`5C:D3:3D:56:71:F4`) sits at `0x02`, the OPPO
-address `1a 20 4c 2d 47 14` at `0x3c`. `btapp.db.galaxy-fresh` is the one-record
-form the dongle wrote after the 2026-10-28 re-pair, 33 B.
+A 207-byte dump holds two records, one per paired phone: `02 01` at `0x00` and
+`0x3a`, each followed six bytes later by that phone's Bluetooth address
+reversed. A fresh 33-byte dump (written after a re-pair) holds one record.
 
 The trailer is not a CRC-16 of the body under nine common variants (CCITT-FALSE,
 XMODEM, KERMIT, X25, MODBUS, IBM, ARC, AUG-CCITT, GENIBUS, both endiannesses),
@@ -259,10 +242,10 @@ on 2026-10-28 and not re-measured after the BT DB reset: `unverified`.
 | Interface | Value | Source |
 | --- | --- | --- |
 | BT Classic name | `AutoLink-A512` | operating notes; `unverified` |
-| BT address | `ED:A2:A4:94:4F:B8` | `dongle-backup/bt.mac.txt` |
+| BT address | 12 ASCII hex chars, no separators | `bt.mac` over MTP |
 | BT class | `0x200420`, HFP | operating notes; `unverified` |
 | Wi-Fi AP | `AutoLink-A512`, 5 GHz, channel 36 (5180 MHz), WPA2-PSK `12345678` | operating notes; `unverified` |
-| Wi-Fi BSSID | `e8:5c:b1:b5:c6:41` | operating notes; `unverified` |
+| Wi-Fi BSSID | per-unit, read from the AP | operating notes; `unverified` |
 
 The dongle LED is not an AA-link indicator: it is lit or blinking in MTP and
 dark in AOA (`unverified`).

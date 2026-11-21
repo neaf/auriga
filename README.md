@@ -1,11 +1,23 @@
 # Auriga
 
-A working Android Auto head unit and capture rig for macOS: an AutoLink A512
-dongle, patched OpenAuto, and a local H.264/PCM stream shown in Brave.
+Turns a Mac into a real Android Auto head unit: an AutoLink A512 dongle,
+patched OpenAuto, and a local H.264/PCM stream shown in Brave. A normal phone
+with its normal Android Auto stack projects through the dongle, same as it
+would to a car.
 
-The phone projects through the dongle; `autoapp` captures video, audio, and
-touch input into per-session directories; `auriga_stream.py` serves the live
-session to the browser and forwards taps back to the phone.
+That makes it two things:
+
+- A head unit. Drive the phone's own Android Auto session from a laptop,
+  touch and all, no car required.
+- A test rig for a custom Android Auto app under development. `autoapp`
+  captures every session's video, audio, and touch input to disk; a script
+  or an AI agent can read `video.h264`/`audio-*.wav` frame by frame and drive
+  the app by writing synthetic taps to the input FIFO, so a full interaction
+  loop (see a frame, tap, see the result) runs without a human or a car.
+
+`autoapp` captures video, audio, and touch input into per-session
+directories; `auriga_stream.py` serves the live session to the browser and
+forwards taps back to the phone.
 
 ## Quick start
 
@@ -64,7 +76,7 @@ Auriga. `AGENTS.md#running-a-different-app` has the app-visibility checks.
 ./scripts/auriga.sh status
 ioreg -p IOUSB -l -w 0 | grep -E 'o (AutoLink|SAMSUNG_Android)@|"idProduct" = (26720|11520|11521|65344)'
 adb devices -l
-adb -s RFGL329J04J shell svc usb getFunctions   # expect: mtp
+adb -s <PHONE_SERIAL> shell svc usb getFunctions   # expect: mtp
 tail -20 "$(ls -t logs/openauto-mac-*.log | head -1)"   # Version Received + pings
 ffmpeg -loglevel info -i captures-mac/current/video.h264 -f null - 2>&1 | tail -1
 ```
@@ -123,7 +135,7 @@ and the macOS toolchain.
 | Item | Detail |
 | --- | --- |
 | Dongle | AutoLink A512; MTP `2717:ff40`, AOA `18d1:2d00`; BT/Wi-Fi `AutoLink-A512` |
-| Phone | Samsung Galaxy S25 (`SM-S931B`), AA 17.9, ADB `RFGL329J04J` |
+| Phone | Samsung Galaxy S25 (`SM-S931B`), AA 17.9, ADB `<PHONE_SERIAL>` |
 | Host | macOS (Apple Silicon) |
 | Stream | HTTP `127.0.0.1:8080`, WebSocket `127.0.0.1:8081` |
 

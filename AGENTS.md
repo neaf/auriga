@@ -58,8 +58,8 @@ the app-grid icon at the bottom-right of the Brave canvas and choose the app;
 Check that Android Auto can see the app before blaming the rig:
 
 ```bash
-adb -s RFGL329J04J shell cmd package query-services -a androidx.car.app.CarAppService
-adb -s RFGL329J04J shell dumpsys package <package> | grep -E "versionName|installerPackageName"
+adb -s <PHONE_SERIAL> shell cmd package query-services -a androidx.car.app.CarAppService
+adb -s <PHONE_SERIAL> shell dumpsys package <package> | grep -E "versionName|installerPackageName"
 ```
 
 Navigation/template apps on Android Auto 17.x also need a Play install record
@@ -83,7 +83,7 @@ app's own `docs/ANDROID-AUTO-LAUNCHER.md` for Mevia.
 ./scripts/auriga.sh status
 ioreg -p IOUSB -l -w 0 | grep -E 'o (AutoLink|SAMSUNG_Android)@|"idProduct" = (26720|11520|11521|65344)'
 adb devices -l
-adb -s RFGL329J04J shell svc usb getFunctions   # expect: mtp
+adb -s <PHONE_SERIAL> shell svc usb getFunctions   # expect: mtp
 tail -20 "$(ls -t logs/openauto-mac-*.log | head -1)"   # Version Received + pings
 ffmpeg -loglevel info -i captures-mac/current/video.h264 -f null - 2>&1 | tail -1
 # `current` exists only after the first AA session; `status` prints "session: none yet" until then.
@@ -113,7 +113,7 @@ ffmpeg -loglevel error -i captures-mac/current/video.h264 \
 ```
 
 If an emulator is attached, always target the phone explicitly:
-`adb -s RFGL329J04J ...`. Bare `adb` fails with
+`adb -s <PHONE_SERIAL> ...`. Bare `adb` fails with
 "more than one device/emulator".
 
 ## Interacting with the live head unit
@@ -167,7 +167,7 @@ and client behavior.
 - Do not accept `18d1:2d01` as the dongle; that is an AOA+ADB phone. The
   AutoLink dongle is `18d1:2d00`.
 - If the phone is already `18d1:2d01` from an older run, reset it before
-  starting: `adb -s RFGL329J04J shell svc usb setFunctions mtp` (or replug the
+  starting: `adb -s <PHONE_SERIAL> shell svc usb setFunctions mtp` (or replug the
   phone).
 - **Dongle recovery:** if the dongle is stuck in AOA with a stale TLS session,
   `autoapp` waits at `Waiting for device...`. A `libusb` reset does not restore
