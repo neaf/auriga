@@ -57,7 +57,9 @@ goes through `AudioPlaybackCapture`, which works with the screen off.
   (RFCOMM to the dongle, Wi-Fi credentials, `WifiNetworkSpecifier`).
 - The phone certificate: the dongle only accepts a Google-issued `O=CarService`
   certificate (`daxter-certs/aare-phone.p12`); AARE's generated one is rejected
-  with status `-3`.
+  with status `-3`. That cert expires 2027-02-03 (serial `13AE5EC90E7476`); see
+  `daxter-certs/README.md` for backup guidance. No regeneration procedure is
+  documented, so back the directory up rather than planning to recreate it.
 - The dongle's certificate rotation: it presents one of two leaf certificates
   (`4e75e8b3…`, `1c0e0ef9…`); see [`AARE fork.md`](AARE%20fork.md) for the pin
   patch.
